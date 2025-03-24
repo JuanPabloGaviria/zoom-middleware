@@ -6,8 +6,9 @@ import { downloadFile, convertToMp3, cleanupFiles } from '../services/audioServi
 import { transcribeAudio } from '../services/transcriptionService';
 import { extractInformation } from '../services/extractionService';
 import { updateClickUpTask } from '../services/clickupService';
+import { ApiError } from '../types';
 
-export const testGoogleDriveAudio = async (req: Request, res: Response) => {
+export const testGoogleDriveAudio = async (req: Request, res: Response): Promise<void> => {
   const filesToCleanup: string[] = [];
   
   try {
@@ -28,8 +29,9 @@ export const testGoogleDriveAudio = async (req: Request, res: Response) => {
     let transcription: string;
     try {
       transcription = await transcribeAudio(mp3FilePath);
-    } catch (transcriptionError) {
-      logger.error('Transcription failed, using fallback text', { error: transcriptionError });
+    } catch (transcriptionErr: unknown) {
+      const transcriptionError = transcriptionErr as ApiError;
+      logger.error('Transcription failed, using fallback text', { message: transcriptionError.message });
       
       // Use a fallback transcription for testing
       transcription = "Hola equipo, vamos a revisar algunos cambios para nuestros personajes. Para el Project: Prj, necesitamos actualizar al Character: Jerry con una nueva Task: Blocking para la cabeza y el cuerpo. El movimiento no es fluido y necesitamos mejorar las expresiones faciales. También para Character: Tom necesitamos revisar la Task: Animation de las patas traseras. No olvidemos actualizar la documentación en ClickUp con estos cambios.";
@@ -48,14 +50,15 @@ export const testGoogleDriveAudio = async (req: Request, res: Response) => {
       try {
         await updateClickUpTask(info);
         updateResults.push({
-          personaje: info.personaje,
-          tarea: info.tarea,
+          character: info.character,
+          task: info.task,
           status: 'success'
         });
-      } catch (updateError) {
+      } catch (updateErr: unknown) {
+        const updateError = updateErr as ApiError;
         updateResults.push({
-          personaje: info.personaje,
-          tarea: info.tarea,
+          character: info.character,
+          task: info.task,
           status: 'error',
           error: updateError.message
         });
@@ -71,8 +74,9 @@ export const testGoogleDriveAudio = async (req: Request, res: Response) => {
         clickUpUpdates: updateResults
       }
     });
-  } catch (error) {
-    logger.error('Test failed', { error });
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Test failed', { message: error.message });
     res.status(500).json({
       status: 'error',
       message: error.message
