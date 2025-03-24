@@ -7,7 +7,8 @@ import {
   ClickUpSpace, 
   ClickUpList, 
   ClickUpTask, 
-  ChecklistItem 
+  ChecklistItem,
+  ApiError
 } from '../types';
 
 const CLICKUP_API_URL = 'https://api.clickup.com/api/v2';
@@ -32,7 +33,8 @@ export const getTeams = async (): Promise<ClickUpTeam[]> => {
     }
     
     return response.data.teams;
-  } catch (error) {
+  } catch (err: unknown) {
+    const error = err as ApiError;
     logger.error('Error fetching ClickUp teams', { 
       status: error.response?.status,
       data: error.response?.data,
@@ -62,7 +64,8 @@ export const getSpaces = async (teamId: string): Promise<ClickUpSpace[]> => {
     }
     
     return response.data.spaces;
-  } catch (error) {
+  } catch (err: unknown) {
+    const error = err as ApiError;
     logger.error('Error fetching ClickUp spaces', { 
       teamId,
       status: error.response?.status,
@@ -93,7 +96,8 @@ export const getLists = async (spaceId: string): Promise<ClickUpList[]> => {
     }
     
     return response.data.lists;
-  } catch (error) {
+  } catch (err: unknown) {
+    const error = err as ApiError;
     logger.error('Error fetching ClickUp lists', { 
       spaceId,
       status: error.response?.status,
@@ -128,7 +132,8 @@ export const searchTasks = async (listId: string, characterName: string): Promis
     }
     
     return response.data.tasks;
-  } catch (error) {
+  } catch (err: unknown) {
+    const error = err as ApiError;
     logger.error('Error searching ClickUp tasks', { 
       listId,
       characterName,
@@ -161,7 +166,8 @@ export const addComment = async (taskId: string, commentText: string): Promise<v
     );
     
     logger.info('Comment added successfully');
-  } catch (error) {
+  } catch (err: unknown) {
+    const error = err as ApiError;
     logger.error('Error adding comment to task', { 
       taskId,
       status: error.response?.status,
@@ -194,7 +200,8 @@ export const createChecklist = async (taskId: string, name: string, items: Check
     );
     
     logger.info('Checklist created successfully');
-  } catch (error) {
+  } catch (err: unknown) {
+    const error = err as ApiError;
     logger.error('Error creating checklist', { 
       taskId,
       status: error.response?.status,
@@ -311,8 +318,9 @@ export const updateClickUpTask = async (info: ExtractedInfo): Promise<void> => {
     await createChecklist(taskId, checklistName, checklistItems);
     
     logger.info(`ClickUp task ${taskId} updated successfully`);
-  } catch (error) {
-    logger.error('Error updating ClickUp task', { error });
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error updating ClickUp task', { message: error.message });
     throw new Error(`Failed to update ClickUp: ${error.message}`);
   }
 };
