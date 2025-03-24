@@ -1,0 +1,8 @@
+{
+    "name": "zoom-clickup-root",
+    "version": "1.0.0",
+    "scripts": {
+      "build": "cd zoom-middleware/zoom-clickup-integration && npm install && npm run build",
+      "start": "node zoom-middleware/zoom-clickup-integration/dist/app.js"
+    }
+  }
