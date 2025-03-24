@@ -1,5 +1,5 @@
 import logger from '../config/logger';
-import { ExtractedInfo } from '../types';
+import { ExtractedInfo, ApiError } from '../types';
 
 /**
  * Extracts character, project and task information from transcribed text
@@ -61,8 +61,9 @@ export const extractInformation = (text: string): ExtractedInfo[] => {
     
     logger.info(`Extracted ${results.length} character/task combinations`);
     return results;
-  } catch (error) {
-    logger.error('Error extracting information', { error });
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error extracting information', { message: error.message });
     throw new Error(`Extraction failed: ${error.message}`);
   }
 };
