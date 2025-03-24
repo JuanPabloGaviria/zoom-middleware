@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import config from '../config/env';
 import logger from '../config/logger';
 
-export const verifyZoomWebhook = (req: Request, res: Response, next: NextFunction) => {
+export const verifyZoomWebhook = (req: Request, res: Response, next: NextFunction): void => {
   try {
     // Check for URL validation event
     if (req.body.event === 'endpoint.url_validation') {
@@ -12,10 +12,14 @@ export const verifyZoomWebhook = (req: Request, res: Response, next: NextFunctio
       const encryptedToken = hashAlgorithm.update(plainToken).digest('hex');
       
       logger.info('Processing Zoom URL validation');
-      return res.status(200).json({
+      
+      // Send response directly without returning
+      res.status(200).json({
         plainToken,
         encryptedToken
       });
+      // Return without passing to next middleware
+      return;
     }
     
     // For regular events, verify signature
@@ -27,7 +31,8 @@ export const verifyZoomWebhook = (req: Request, res: Response, next: NextFunctio
     
     if (req.headers['x-zm-signature'] !== signature) {
       logger.warn('Invalid Zoom webhook signature');
-      return res.status(401).json({ error: 'Invalid signature' });
+      res.status(401).json({ error: 'Invalid signature' });
+      return;
     }
     
     logger.info(`Received valid Zoom webhook: ${req.body.event}`);

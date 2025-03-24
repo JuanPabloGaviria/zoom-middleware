@@ -4,8 +4,9 @@ import { verifyZoomWebhook } from '../middleware/zoomAuthMiddleware';
 
 const router = Router();
 
-// Fix for the type error in verifyZoomWebhook middleware
+// Fixed route handler
 router.post('/zoom', verifyZoomWebhook, (req, res) => {
+  // The middleware will handle special cases like validation
   handleZoomWebhook(req, res).catch(err => {
     console.error('Uncaught error in webhook handler:', err);
     if (!res.headersSent) {
