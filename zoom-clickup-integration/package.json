@@ -1,13 +1,17 @@
 {
   "name": "zoom-clickup-integration",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Integration between Zoom and ClickUp for automated task updates",
+  "main": "dist/app.js",
   "scripts": {
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "dev": "ts-node-dev --respawn src/app.ts",
+    "lint": "eslint . --ext .ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["zoom", "clickup", "integration", "automation"],
+  "author": "Juan Pablo Gaviria",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
