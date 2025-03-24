@@ -2,6 +2,7 @@ import fs from 'fs';
 import { OpenAI } from 'openai';
 import config from '../config/env';
 import logger from '../config/logger';
+import { ApiError } from '../types';
 
 const openai = new OpenAI({ apiKey: config.openai.apiKey });
 
@@ -27,8 +28,9 @@ export const transcribeAudio = async (filePath: string): Promise<string> => {
     
     logger.info('Transcription completed successfully');
     return transcription;
-  } catch (error) {
-    logger.error('Error transcribing audio', { error });
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error transcribing audio', { message: error.message });
     throw new Error(`Transcription failed: ${error.message}`);
   }
 };
