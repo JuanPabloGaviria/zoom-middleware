@@ -1,0 +1,33 @@
+# Dependencias
+node_modules/
+
+# Archivos de compilación
+dist/
+build/
+
+# Variables de entorno
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Archivos temporales
+tmp/
+temp/
+uploads/
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
