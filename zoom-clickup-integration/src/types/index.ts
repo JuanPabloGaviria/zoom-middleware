@@ -67,11 +67,21 @@ export interface AppConfig {
   
   // Information extraction types
   export interface ExtractedInfo {
-    project: string;
-    character: string;
-    task: string;
+    project: string;    // English version
+    character: string;  // English version
+    task: string;       // English version
     context?: string;
     confidence?: number;
+  }
+  
+  // Error types
+  export interface ApiError extends Error {
+    response?: {
+      status?: number;
+      data?: any;
+    };
+    status?: number;
+    code?: string;
   }
   
   // ClickUp related types

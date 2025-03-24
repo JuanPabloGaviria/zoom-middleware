@@ -4,7 +4,7 @@ import { promisify } from 'util';
 import { spawn } from 'child_process';
 import axios, { AxiosRequestConfig } from 'axios';
 import logger from '../config/logger';
-import { AudioProcessingResult } from '../types';
+import { AudioProcessingResult, ApiError } from '../types';
 
 const exec = promisify(require('child_process').exec);
 const writeFile = promisify(fs.writeFile);
@@ -57,8 +57,12 @@ export const downloadFile = async (url: string, downloadToken?: string): Promise
     logger.info(`File downloaded to ${filePath} (${Math.round(stats.size / 1024)} KB)`);
     
     return filePath;
-  } catch (error) {
-    logger.error('Error downloading file', { error: error.message, stack: error.stack });
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error downloading file', { 
+      message: error.message, 
+      stack: error.stack 
+    });
     throw new Error(`Failed to download file: ${error.message}`);
   }
 };
@@ -110,8 +114,12 @@ export const convertToMp3 = async (inputPath: string): Promise<string> => {
         reject(new Error(`FFmpeg error: ${err.message}`));
       });
     });
-  } catch (error) {
-    logger.error('Error converting file', { error: error.message, stack: error.stack });
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error converting file', { 
+      message: error.message, 
+      stack: error.stack 
+    });
     throw new Error(`Failed to convert file: ${error.message}`);
   }
 };
@@ -130,8 +138,12 @@ export const cleanupFiles = async (files: string[]): Promise<void> => {
         logger.warn(`File not found for cleanup: ${file}`);
       }
     }
-  } catch (error) {
-    logger.error('Error cleaning up files', { error: error.message, stack: error.stack });
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error cleaning up files', { 
+      message: error.message, 
+      stack: error.stack 
+    });
     // We don't throw here, just log the error as cleanup is a best-effort operation
   }
 };
@@ -165,8 +177,9 @@ export const processAudioFile = async (sourceUrl: string, downloadToken?: string
     if (originalPath && fs.existsSync(originalPath)) {
       try {
         await unlink(originalPath);
-      } catch (cleanupError) {
-        logger.error('Error cleaning up after processing failure', { error: cleanupError.message });
+      } catch (cleanupErr: unknown) {
+        const cleanupError = cleanupErr as Error;
+        logger.error('Error cleaning up after processing failure', { message: cleanupError.message });
       }
     }
     
