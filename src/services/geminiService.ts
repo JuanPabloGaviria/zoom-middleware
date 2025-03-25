@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } from '@google/generative-ai';
 import config from '../config/env';
 import logger from '../config/logger';
 import { ExtractedInfo, ApiError } from '../types';
@@ -13,52 +13,71 @@ const genAI = new GoogleGenerativeAI(config.gemini.apiKey);
  */
 export const extractInformationWithGemini = async (text: string): Promise<ExtractedInfo[]> => {
   try {
-    logger.info('Extracting information using Google Gemini');
+    logger.info('Extracting information using Google Gemini 2.0 Pro Experimental');
     logger.info(`Text to analyze: ${text.substring(0, 200)}...`);
     
-    // Initialize the model - using Pro for better Spanish understanding
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" }); // Use Pro instead of Flash
+    // Initialize the Gemini 2.0 Pro Experimental model
+    // This is the experimental version with enhanced capabilities
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-pro-experimental",
+      safetySettings: [
+        {
+          category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        }
+      ]
+    });
     
-    // Create improved prompt for Gemini with stronger emphasis on Spanish understanding
+    // Create more specific prompt focused on exact character and task extraction
     const prompt = `
-      Analiza esta conversación en español sobre personajes de animación y sus tareas.
+      CONVERSACIÓN DE ANIMACIÓN: EXTRACCIÓN DE PERSONAJES Y TAREAS
       
-      IMPORTANTE: La conversación está principalmente en ESPAÑOL. El sistema está diseñado para identificar personajes de animación como Tom y Jerry, pero también debe reconocer otros personajes que se mencionen.
+      La siguiente es una transcripción en español de una reunión de animación. Necesito que identifiques con precisión:
       
-      Identifica lo siguiente:
-      1. Nombres de personajes de animación que se mencionan en la conversación
-      2. Tareas que deben realizarse con estos personajes (Blocking, Animation, Rigging, Modeling, etc.)
-      3. El nombre del proyecto si se menciona (usa "Prj" como valor predeterminado si no se especifica)
+      1. PERSONAJES ANIMADOS mencionados (como Tom, Jerry, etc.)
+      2. TAREAS específicas que deben realizarse para estos personajes
+      3. PROYECTO al que pertenecen (usa "Prj" si no se especifica)
       
-      Instrucciones importantes:
-      - NO incluyas a los participantes de la conversación como personajes.
-      - Enfócate SOLO en los personajes de animación que se discuten.
-      - Traduce los nombres de tareas del español al inglés (ej. "Animación" → "Animation", "Bloqueo" → "Blocking").
-      - Las tareas estándar de animación incluyen: Blocking, Animation, Rigging, Modeling, Texturing, Lighting, Rendering.
-      - Proporciona contexto para cada par personaje-tarea.
+      INSTRUCCIONES CRÍTICAS:
+      - Analiza con extremo cuidado cada mención de nombres que podrían ser personajes
+      - La transcripción es de una reunión real y los personajes pueden tener nombres como: Tom, Jerry, Alfale, Pietro, Jane, Fairy, Chain, Butterworth, Goodfellow u otros nombres propios
+      - Las tareas pueden incluir: Blocking, Animation, Rigging, Modeling, Texturing, Topology, etc.
+      - Identifica exactamente las tareas mencionadas para cada personaje
+      - NO inventes personajes o tareas que no están explícitamente mencionados
+      - Captura el contexto exacto de lo que se debe hacer con cada personaje
+      - NO CONFUNDAS personas reales (José, Luis, Javier) con personajes animados
       
-      Devuelve la información en este formato JSON exacto (respuesta solo en inglés):
+      FORMATO DE RESPUESTA:
+      Devuelve ÚNICAMENTE un objeto JSON válido con este formato exacto:
       {
         "characters": [
           {
-            "name": "CharacterName",
-            "tasks": ["Task1", "Task2"],
-            "context": "Brief description of what needs to be done"
+            "name": "NombrePersonaje",
+            "tasks": ["Tarea1", "Tarea2"],
+            "context": "Descripción breve y exacta de lo que debe hacerse"
           }
         ],
-        "project": "ProjectName"
+        "project": "NombreProyecto"
       }
       
-      Aquí está la conversación para analizar:
+      TRANSCRIPCIÓN:
       ${text}
     `;
     
-    // Generate content with a higher temperature for more creative parsing
+    // Generate content with configuration optimized for precise extraction
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
-        temperature: 0.2,
-        topP: 0.8,
+        temperature: 0.1,      // Lower temperature for more precise extraction
+        topP: 0.95,            // Higher topP to allow for more precise outputs
         topK: 40,
         maxOutputTokens: 4096,
       }
@@ -68,49 +87,50 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
     const responseText = response.text();
     
     logger.info('Gemini analysis completed');
-    logger.debug(`Raw Gemini response: ${responseText}`);
+    logger.info(`Raw Gemini response: ${responseText}`);
     
-    // Extract JSON from the response with improved parsing
-    let jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || 
-                   responseText.match(/```\n([\s\S]*?)\n```/) || 
-                   responseText.match(/{[\s\S]*}/);
-    
+    // Improved JSON extraction with robust parsing
     let parsedData;
     
-    if (jsonMatch) {
-      try {
-        parsedData = JSON.parse(jsonMatch[1] || jsonMatch[0]);
-      } catch (e) {
-        logger.error('Failed to parse matched JSON', { match: jsonMatch[0] });
-        // Try additional cleanup to fix common JSON parsing issues
-        const cleanedJson = (jsonMatch[1] || jsonMatch[0])
-          .replace(/,\s*}/g, '}')
-          .replace(/,\s*\]/g, ']')
-          .replace(/\\'/g, "'")
-          .replace(/\\"/g, '"');
-        
+    try {
+      // First try direct JSON parsing
+      parsedData = JSON.parse(responseText.trim());
+    } catch (e) {
+      logger.warn('Direct JSON parsing failed, trying to extract JSON from response');
+      
+      // Extract JSON with regex patterns
+      const jsonMatch = responseText.match(/```json\s*\n([\s\S]*?)\n\s*```/) || 
+                        responseText.match(/```\s*\n([\s\S]*?)\n\s*```/) || 
+                        responseText.match(/{[\s\S]*"characters"[\s\S]*}/);
+      
+      if (jsonMatch) {
         try {
-          parsedData = JSON.parse(cleanedJson);
+          const jsonText = jsonMatch[1] || jsonMatch[0];
+          parsedData = JSON.parse(jsonText);
         } catch (e2) {
-          throw new Error('Invalid JSON format in Gemini response even after cleanup');
-        }
-      }
-    } else {
-      try {
-        // Try to parse the entire response as JSON with additional cleanup
-        const cleanedResponse = responseText
-          .replace(/[\n\r]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .match(/{.*}/);
+          logger.error('Failed to parse extracted JSON, trying cleanup');
           
-        if (cleanedResponse) {
-          parsedData = JSON.parse(cleanedResponse[0]);
-        } else {
-          throw new Error('No JSON found in response');
+          // Enhanced cleanup for common JSON issues
+          const cleanedJson = (jsonMatch[1] || jsonMatch[0])
+            .replace(/,\s*}/g, '}')
+            .replace(/,\s*\]/g, ']')
+            .replace(/\\'/g, "'")
+            .replace(/\\"/g, '"')
+            .replace(/\n/g, ' ')
+            .replace(/\r/g, ' ')
+            .replace(/\t/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          
+          try {
+            parsedData = JSON.parse(cleanedJson);
+          } catch (e3) {
+            logger.error('All JSON parsing attempts failed');
+            throw new Error('Unable to extract valid JSON from Gemini response after multiple attempts');
+          }
         }
-      } catch (e) {
-        logger.error('Failed to parse Gemini response as JSON', { response: responseText });
-        throw new Error('Failed to get valid JSON from Gemini response');
+      } else {
+        throw new Error('No JSON structure found in Gemini response');
       }
     }
     
