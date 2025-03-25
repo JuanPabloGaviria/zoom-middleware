@@ -1,6 +1,7 @@
 import axios from 'axios';
 import config from '../config/env';
 import logger from '../config/logger';
+import clickUpRateLimiter from './rateLimit';
 import { 
   ExtractedInfo, 
   ClickUpTeam, 
@@ -22,17 +23,19 @@ export const getTeams = async (): Promise<ClickUpTeam[]> => {
   try {
     logger.info('Fetching ClickUp teams');
     
-    const response = await axios.get(`${CLICKUP_API_URL}/team`, {
-      headers: {
-        'Authorization': API_KEY
+    return await clickUpRateLimiter.execute(async () => {
+      const response = await axios.get(`${CLICKUP_API_URL}/team`, {
+        headers: {
+          'Authorization': API_KEY
+        }
+      });
+      
+      if (!response.data || !response.data.teams) {
+        throw new Error('Invalid response format from ClickUp API');
       }
-    });
-    
-    if (!response.data || !response.data.teams) {
-      throw new Error('Invalid response format from ClickUp API');
-    }
-    
-    return response.data.teams;
+      
+      return response.data.teams;
+    }, 'getTeams');
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error fetching ClickUp teams', { 
@@ -53,17 +56,19 @@ export const getSpaces = async (teamId: string): Promise<ClickUpSpace[]> => {
   try {
     logger.info(`Fetching spaces for team ${teamId}`);
     
-    const response = await axios.get(`${CLICKUP_API_URL}/team/${teamId}/space`, {
-      headers: {
-        'Authorization': API_KEY
+    return await clickUpRateLimiter.execute(async () => {
+      const response = await axios.get(`${CLICKUP_API_URL}/team/${teamId}/space`, {
+        headers: {
+          'Authorization': API_KEY
+        }
+      });
+      
+      if (!response.data || !response.data.spaces) {
+        throw new Error('Invalid response format from ClickUp API');
       }
-    });
-    
-    if (!response.data || !response.data.spaces) {
-      throw new Error('Invalid response format from ClickUp API');
-    }
-    
-    return response.data.spaces;
+      
+      return response.data.spaces;
+    }, `getSpaces:${teamId}`);
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error fetching ClickUp spaces', { 
@@ -85,17 +90,19 @@ export const getFolders = async (spaceId: string): Promise<any[]> => {
   try {
     logger.info(`Fetching folders for space ${spaceId}`);
     
-    const response = await axios.get(`${CLICKUP_API_URL}/space/${spaceId}/folder`, {
-      headers: {
-        'Authorization': API_KEY
+    return await clickUpRateLimiter.execute(async () => {
+      const response = await axios.get(`${CLICKUP_API_URL}/space/${spaceId}/folder`, {
+        headers: {
+          'Authorization': API_KEY
+        }
+      });
+      
+      if (!response.data || !response.data.folders) {
+        throw new Error('Invalid response format from ClickUp API');
       }
-    });
-    
-    if (!response.data || !response.data.folders) {
-      throw new Error('Invalid response format from ClickUp API');
-    }
-    
-    return response.data.folders;
+      
+      return response.data.folders;
+    }, `getFolders:${spaceId}`);
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error fetching ClickUp folders', { 
@@ -117,17 +124,19 @@ export const getListsInFolder = async (folderId: string): Promise<ClickUpList[]>
   try {
     logger.info(`Fetching lists in folder ${folderId}`);
     
-    const response = await axios.get(`${CLICKUP_API_URL}/folder/${folderId}/list`, {
-      headers: {
-        'Authorization': API_KEY
+    return await clickUpRateLimiter.execute(async () => {
+      const response = await axios.get(`${CLICKUP_API_URL}/folder/${folderId}/list`, {
+        headers: {
+          'Authorization': API_KEY
+        }
+      });
+      
+      if (!response.data || !response.data.lists) {
+        throw new Error('Invalid response format from ClickUp API');
       }
-    });
-    
-    if (!response.data || !response.data.lists) {
-      throw new Error('Invalid response format from ClickUp API');
-    }
-    
-    return response.data.lists;
+      
+      return response.data.lists;
+    }, `getListsInFolder:${folderId}`);
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error fetching lists in folder', { 
@@ -149,17 +158,19 @@ export const getLists = async (spaceId: string): Promise<ClickUpList[]> => {
   try {
     logger.info(`Fetching lists for space ${spaceId}`);
     
-    const response = await axios.get(`${CLICKUP_API_URL}/space/${spaceId}/list`, {
-      headers: {
-        'Authorization': API_KEY
+    return await clickUpRateLimiter.execute(async () => {
+      const response = await axios.get(`${CLICKUP_API_URL}/space/${spaceId}/list`, {
+        headers: {
+          'Authorization': API_KEY
+        }
+      });
+      
+      if (!response.data || !response.data.lists) {
+        throw new Error('Invalid response format from ClickUp API');
       }
-    });
-    
-    if (!response.data || !response.data.lists) {
-      throw new Error('Invalid response format from ClickUp API');
-    }
-    
-    return response.data.lists;
+      
+      return response.data.lists;
+    }, `getLists:${spaceId}`);
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error fetching ClickUp lists', { 
@@ -181,17 +192,19 @@ export const getTasksInList = async (listId: string): Promise<ClickUpTask[]> => 
   try {
     logger.info(`Fetching tasks in list ${listId}`);
     
-    const response = await axios.get(`${CLICKUP_API_URL}/list/${listId}/task`, {
-      headers: {
-        'Authorization': API_KEY
+    return await clickUpRateLimiter.execute(async () => {
+      const response = await axios.get(`${CLICKUP_API_URL}/list/${listId}/task`, {
+        headers: {
+          'Authorization': API_KEY
+        }
+      });
+      
+      if (!response.data || !response.data.tasks) {
+        throw new Error('Invalid response format from ClickUp API');
       }
-    });
-    
-    if (!response.data || !response.data.tasks) {
-      throw new Error('Invalid response format from ClickUp API');
-    }
-    
-    return response.data.tasks;
+      
+      return response.data.tasks;
+    }, `getTasksInList:${listId}`);
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error fetching tasks in list', { 
@@ -214,23 +227,25 @@ export const createList = async (spaceId: string, name: string): Promise<string>
   try {
     logger.info(`Creating new list "${name}" in space ${spaceId}`);
     
-    const response = await axios.post(
-      `${CLICKUP_API_URL}/space/${spaceId}/list`,
-      { name },
-      {
-        headers: {
-          'Authorization': API_KEY,
-          'Content-Type': 'application/json'
+    return await clickUpRateLimiter.execute(async () => {
+      const response = await axios.post(
+        `${CLICKUP_API_URL}/space/${spaceId}/list`,
+        { name },
+        {
+          headers: {
+            'Authorization': API_KEY,
+            'Content-Type': 'application/json'
+          }
         }
+      );
+      
+      if (!response.data || !response.data.id) {
+        throw new Error('Invalid response format from ClickUp API');
       }
-    );
-    
-    if (!response.data || !response.data.id) {
-      throw new Error('Invalid response format from ClickUp API');
-    }
-    
-    logger.info(`Created new list: ${name} (${response.data.id})`);
-    return response.data.id;
+      
+      logger.info(`Created new list: ${name} (${response.data.id})`);
+      return response.data.id;
+    }, `createList:${spaceId}`);
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error creating ClickUp list', { 
@@ -388,18 +403,20 @@ export const addComment = async (taskId: string, commentText: string): Promise<v
   try {
     logger.info(`Adding comment to task ${taskId}`);
     
-    await axios.post(
-      `${CLICKUP_API_URL}/task/${taskId}/comment`,
-      { comment_text: commentText },
-      {
-        headers: {
-          'Authorization': API_KEY,
-          'Content-Type': 'application/json'
+    await clickUpRateLimiter.execute(async () => {
+      await axios.post(
+        `${CLICKUP_API_URL}/task/${taskId}/comment`,
+        { comment_text: commentText },
+        {
+          headers: {
+            'Authorization': API_KEY,
+            'Content-Type': 'application/json'
+          }
         }
-      }
-    );
-    
-    logger.info('Comment added successfully');
+      );
+      
+      logger.info('Comment added successfully');
+    }, `addComment:${taskId}`);
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error adding comment to task', { 
@@ -422,18 +439,20 @@ export const createChecklist = async (taskId: string, name: string, items: Check
   try {
     logger.info(`Creating checklist on task ${taskId}`);
     
-    await axios.post(
-      `${CLICKUP_API_URL}/task/${taskId}/checklist`,
-      { name, items },
-      {
-        headers: {
-          'Authorization': API_KEY,
-          'Content-Type': 'application/json'
+    await clickUpRateLimiter.execute(async () => {
+      await axios.post(
+        `${CLICKUP_API_URL}/task/${taskId}/checklist`,
+        { name, items },
+        {
+          headers: {
+            'Authorization': API_KEY,
+            'Content-Type': 'application/json'
+          }
         }
-      }
-    );
-    
-    logger.info('Checklist created successfully');
+      );
+      
+      logger.info('Checklist created successfully');
+    }, `createChecklist:${taskId}`);
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error creating checklist', { 
@@ -456,26 +475,28 @@ export const createTask = async (listId: string, character: string): Promise<str
   try {
     logger.info(`Creating new task for character ${character} in list ${listId}`);
     
-    const response = await axios.post(
-      `${CLICKUP_API_URL}/list/${listId}/task`,
-      { 
-        name: `${character} character`,
-        description: `Task for character ${character} created automatically`
-      },
-      {
-        headers: {
-          'Authorization': API_KEY,
-          'Content-Type': 'application/json'
+    return await clickUpRateLimiter.execute(async () => {
+      const response = await axios.post(
+        `${CLICKUP_API_URL}/list/${listId}/task`,
+        { 
+          name: `${character} character`,
+          description: `Task for character ${character} created automatically`
+        },
+        {
+          headers: {
+            'Authorization': API_KEY,
+            'Content-Type': 'application/json'
+          }
         }
+      );
+      
+      if (!response.data || !response.data.id) {
+        throw new Error('Invalid response format from ClickUp API');
       }
-    );
-    
-    if (!response.data || !response.data.id) {
-      throw new Error('Invalid response format from ClickUp API');
-    }
-    
-    logger.info(`Created new task for ${character}: ${response.data.id}`);
-    return response.data.id;
+      
+      logger.info(`Created new task for ${character}: ${response.data.id}`);
+      return response.data.id;
+    }, `createTask:${listId}`);
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error creating task', { 
@@ -514,6 +535,24 @@ export const generateChecklistItems = (taskType: string): ChecklistItem[] => {
       { name: 'skeleton', resolved: false },
       { name: 'controls', resolved: false },
       { name: 'weights', resolved: false }
+    ];
+  } else if (taskTypeLower === 'modeling' || taskTypeLower.includes('model')) {
+    return [
+      { name: 'geometry', resolved: false },
+      { name: 'topology', resolved: false },
+      { name: 'proportions', resolved: false }
+    ];
+  } else if (taskTypeLower === 'texturing' || taskTypeLower.includes('texture')) {
+    return [
+      { name: 'UV mapping', resolved: false },
+      { name: 'texture maps', resolved: false },
+      { name: 'material setup', resolved: false }
+    ];
+  } else if (taskTypeLower.includes('topology')) {
+    return [
+      { name: 'edge flow', resolved: false },
+      { name: 'polygon count', resolved: false },
+      { name: 'deformation areas', resolved: false }
     ];
   } else {
     return [

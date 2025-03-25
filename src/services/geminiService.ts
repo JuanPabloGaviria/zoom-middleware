@@ -16,27 +16,28 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
     logger.info('Extracting information using Google Gemini');
     logger.info(`Text to analyze: ${text.substring(0, 200)}...`);
     
-    // Initialize the model
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Initialize the model - using Pro for better Spanish understanding
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" }); // Use Pro instead of Flash
     
-    // Create prompt for Gemini
+    // Create improved prompt for Gemini with stronger emphasis on Spanish understanding
     const prompt = `
-      Please analyze this conversation about animated characters and their tasks. The conversation may be in Spanish, but I need your responses in English.
+      Analiza esta conversación en español sobre personajes de animación y sus tareas.
       
-      Identify the following:
-      1. Animation character names (e.g., Tom, Jerry, Mickey, Donald, etc.)
-      2. Tasks that need to be performed on these characters (e.g., Blocking, Animation, Rigging, Modeling, etc.)
-      3. The project name if mentioned (default to "Prj" if not specified)
+      IMPORTANTE: La conversación está principalmente en ESPAÑOL. El sistema está diseñado para identificar personajes de animación como Tom y Jerry, pero también debe reconocer otros personajes que se mencionen.
       
-      Important instructions:
-      - Do NOT include the speakers/participants of this conversation as characters.
-      - Focus ONLY on animated characters being discussed.
-      - Translate any Spanish task names to their English equivalents (e.g., "Animación" → "Animation", "Bloqueo" → "Blocking").
-      - Standard animation tasks include: Blocking, Animation, Rigging, Modeling, Texturing, Lighting, Rendering.
-      - If you're uncertain about a task name, keep it in its original form.
-      - Provide context for each character-task pair.
+      Identifica lo siguiente:
+      1. Nombres de personajes de animación que se mencionan en la conversación
+      2. Tareas que deben realizarse con estos personajes (Blocking, Animation, Rigging, Modeling, etc.)
+      3. El nombre del proyecto si se menciona (usa "Prj" como valor predeterminado si no se especifica)
       
-      Return the information in this exact JSON format:
+      Instrucciones importantes:
+      - NO incluyas a los participantes de la conversación como personajes.
+      - Enfócate SOLO en los personajes de animación que se discuten.
+      - Traduce los nombres de tareas del español al inglés (ej. "Animación" → "Animation", "Bloqueo" → "Blocking").
+      - Las tareas estándar de animación incluyen: Blocking, Animation, Rigging, Modeling, Texturing, Lighting, Rendering.
+      - Proporciona contexto para cada par personaje-tarea.
+      
+      Devuelve la información en este formato JSON exacto (respuesta solo en inglés):
       {
         "characters": [
           {
@@ -48,19 +49,28 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
         "project": "ProjectName"
       }
       
-      Here is the conversation to analyze:
+      Aquí está la conversación para analizar:
       ${text}
     `;
     
-    // Generate content
-    const result = await model.generateContent(prompt);
+    // Generate content with a higher temperature for more creative parsing
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.2,
+        topP: 0.8,
+        topK: 40,
+        maxOutputTokens: 4096,
+      }
+    });
+    
     const response = await result.response;
     const responseText = response.text();
     
     logger.info('Gemini analysis completed');
-    logger.info(`Raw Gemini response: ${responseText}`);
+    logger.debug(`Raw Gemini response: ${responseText}`);
     
-    // Extract JSON from the response
+    // Extract JSON from the response with improved parsing
     let jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || 
                    responseText.match(/```\n([\s\S]*?)\n```/) || 
                    responseText.match(/{[\s\S]*}/);
@@ -72,12 +82,32 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
         parsedData = JSON.parse(jsonMatch[1] || jsonMatch[0]);
       } catch (e) {
         logger.error('Failed to parse matched JSON', { match: jsonMatch[0] });
-        throw new Error('Invalid JSON format in Gemini response');
+        // Try additional cleanup to fix common JSON parsing issues
+        const cleanedJson = (jsonMatch[1] || jsonMatch[0])
+          .replace(/,\s*}/g, '}')
+          .replace(/,\s*\]/g, ']')
+          .replace(/\\'/g, "'")
+          .replace(/\\"/g, '"');
+        
+        try {
+          parsedData = JSON.parse(cleanedJson);
+        } catch (e2) {
+          throw new Error('Invalid JSON format in Gemini response even after cleanup');
+        }
       }
     } else {
       try {
-        // Try to parse the entire response as JSON
-        parsedData = JSON.parse(responseText);
+        // Try to parse the entire response as JSON with additional cleanup
+        const cleanedResponse = responseText
+          .replace(/[\n\r]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .match(/{.*}/);
+          
+        if (cleanedResponse) {
+          parsedData = JSON.parse(cleanedResponse[0]);
+        } else {
+          throw new Error('No JSON found in response');
+        }
       } catch (e) {
         logger.error('Failed to parse Gemini response as JSON', { response: responseText });
         throw new Error('Failed to get valid JSON from Gemini response');
