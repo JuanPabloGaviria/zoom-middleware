@@ -1,3 +1,4 @@
+import config from '../config/env';
 import logger from '../config/logger';
 import { AssemblyAI } from 'assemblyai';
 import { ExtractedInfo, ApiError } from '../types';
@@ -12,7 +13,7 @@ export const extractInformationWithLemur = async (filePath: string): Promise<Ext
     logger.info('Extracting information from audio using AssemblyAI Lemur');
     
     const assemblyai = new AssemblyAI({
-      apiKey: process.env.ASSEMBLYAI_API_KEY || ''
+       apiKey: config.assemblyai.apiKey || ''
     });
 
     // First transcribe the audio
