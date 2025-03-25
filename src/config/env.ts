@@ -17,6 +17,10 @@ export default {
   assemblyai: {
     apiKey: process.env.ASSEMBLY_AI_API_KEY || ''
   },
+
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY || ''
+  },
   
   clickup: {
     apiKey: process.env.CLICKUP_API_KEY || '',
