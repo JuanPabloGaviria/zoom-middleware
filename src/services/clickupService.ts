@@ -77,38 +77,6 @@ export const getSpaces = async (teamId: string): Promise<ClickUpSpace[]> => {
 };
 
 /**
- * Get lists for a space
- * @param spaceId - The ClickUp space ID
- * @returns Array of lists
- */
-export const getLists = async (spaceId: string): Promise<ClickUpList[]> => {
-  try {
-    logger.info(`Fetching lists for space ${spaceId}`);
-    
-    const response = await axios.get(`${CLICKUP_API_URL}/space/${spaceId}/list`, {
-      headers: {
-        'Authorization': API_KEY
-      }
-    });
-    
-    if (!response.data || !response.data.lists) {
-      throw new Error('Invalid response format from ClickUp API');
-    }
-    
-    return response.data.lists;
-  } catch (err: unknown) {
-    const error = err as ApiError;
-    logger.error('Error fetching ClickUp lists', { 
-      spaceId,
-      status: error.response?.status,
-      data: error.response?.data,
-      message: error.message 
-    });
-    throw new Error(`Failed to fetch lists: ${error.message}`);
-  }
-};
-
-/**
  * Get folders for a space
  * @param spaceId - The ClickUp space ID
  * @returns Array of folders
@@ -141,15 +109,79 @@ export const getFolders = async (spaceId: string): Promise<any[]> => {
 };
 
 /**
- * Get tasks in a folder
+ * Get lists in a folder
  * @param folderId - The ClickUp folder ID
+ * @returns Array of lists
+ */
+export const getListsInFolder = async (folderId: string): Promise<ClickUpList[]> => {
+  try {
+    logger.info(`Fetching lists in folder ${folderId}`);
+    
+    const response = await axios.get(`${CLICKUP_API_URL}/folder/${folderId}/list`, {
+      headers: {
+        'Authorization': API_KEY
+      }
+    });
+    
+    if (!response.data || !response.data.lists) {
+      throw new Error('Invalid response format from ClickUp API');
+    }
+    
+    return response.data.lists;
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error fetching lists in folder', { 
+      folderId,
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message 
+    });
+    throw new Error(`Failed to fetch lists in folder: ${error.message}`);
+  }
+};
+
+/**
+ * Get lists for a space
+ * @param spaceId - The ClickUp space ID
+ * @returns Array of lists
+ */
+export const getLists = async (spaceId: string): Promise<ClickUpList[]> => {
+  try {
+    logger.info(`Fetching lists for space ${spaceId}`);
+    
+    const response = await axios.get(`${CLICKUP_API_URL}/space/${spaceId}/list`, {
+      headers: {
+        'Authorization': API_KEY
+      }
+    });
+    
+    if (!response.data || !response.data.lists) {
+      throw new Error('Invalid response format from ClickUp API');
+    }
+    
+    return response.data.lists;
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error fetching ClickUp lists', { 
+      spaceId,
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message 
+    });
+    throw new Error(`Failed to fetch lists: ${error.message}`);
+  }
+};
+
+/**
+ * Get tasks in a list
+ * @param listId - The ClickUp list ID
  * @returns Array of tasks
  */
-export const getTasksInFolder = async (folderId: string): Promise<ClickUpTask[]> => {
+export const getTasksInList = async (listId: string): Promise<ClickUpTask[]> => {
   try {
-    logger.info(`Fetching tasks in folder ${folderId}`);
+    logger.info(`Fetching tasks in list ${listId}`);
     
-    const response = await axios.get(`${CLICKUP_API_URL}/folder/${folderId}/task`, {
+    const response = await axios.get(`${CLICKUP_API_URL}/list/${listId}/task`, {
       headers: {
         'Authorization': API_KEY
       }
@@ -162,13 +194,13 @@ export const getTasksInFolder = async (folderId: string): Promise<ClickUpTask[]>
     return response.data.tasks;
   } catch (err: unknown) {
     const error = err as ApiError;
-    logger.error('Error fetching tasks in folder', { 
-      folderId,
+    logger.error('Error fetching tasks in list', { 
+      listId,
       status: error.response?.status,
       data: error.response?.data,
       message: error.message 
     });
-    throw new Error(`Failed to fetch tasks in folder: ${error.message}`);
+    throw new Error(`Failed to fetch tasks in list: ${error.message}`);
   }
 };
 
@@ -247,20 +279,12 @@ export const searchTasks = async (listId: string, characterName: string): Promis
   try {
     logger.info(`Searching for tasks with character ${characterName} in list ${listId}`);
     
-    const response = await axios.get(`${CLICKUP_API_URL}/list/${listId}/task`, {
-      headers: {
-        'Authorization': API_KEY
-      },
-      params: {
-        name: characterName
-      }
-    });
+    const tasks = await getTasksInList(listId);
+    const matchingTasks = tasks.filter(task => 
+      task.name.toLowerCase().includes(characterName.toLowerCase())
+    );
     
-    if (!response.data || !response.data.tasks) {
-      throw new Error('Invalid response format from ClickUp API');
-    }
-    
-    return response.data.tasks;
+    return matchingTasks;
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('Error searching ClickUp tasks', { 
@@ -290,31 +314,60 @@ export const findTaskForCharacter = async (spaceId: string, character: string): 
     
     if (prjFolder) {
       logger.info(`Found "Prj" folder: ${prjFolder.id}`);
-      const tasksInFolder = await getTasksInFolder(prjFolder.id);
       
-      // Look for task with character name
-      const characterTask = tasksInFolder.find(task => 
-        task.name.toLowerCase().includes(character.toLowerCase())
-      );
+      // Get lists in the Prj folder
+      const listsInFolder = await getListsInFolder(prjFolder.id);
       
-      if (characterTask) {
-        logger.info(`Found task for ${character} in folder: ${characterTask.id}`);
-        return characterTask.id;
+      if (listsInFolder.length > 0) {
+        // Search for character in each list in the folder
+        for (const list of listsInFolder) {
+          logger.info(`Checking list ${list.name} (${list.id}) for character ${character}`);
+          
+          try {
+            const tasks = await getTasksInList(list.id);
+            const characterTask = tasks.find(task => 
+              task.name.toLowerCase().includes(character.toLowerCase())
+            );
+            
+            if (characterTask) {
+              logger.info(`Found task for ${character} in list ${list.name}: ${characterTask.id}`);
+              return characterTask.id;
+            }
+          } catch (listErr: unknown) {
+            const listError = listErr as ApiError;
+            logger.warn(`Error searching list ${list.id}`, { message: listError.message });
+            // Continue to next list if one fails
+          }
+        }
       }
     }
     
-    // If not found in folders, try lists
+    // If not found in folder structure, try direct lists in space
     try {
-      const listId = await getOrCreateList(spaceId);
-      const tasksInList = await searchTasks(listId, character);
+      const lists = await getLists(spaceId);
       
-      if (tasksInList.length > 0) {
-        logger.info(`Found task for ${character} in list: ${tasksInList[0].id}`);
-        return tasksInList[0].id;
+      for (const list of lists) {
+        logger.info(`Checking space list ${list.name} (${list.id}) for character ${character}`);
+        
+        try {
+          const tasks = await getTasksInList(list.id);
+          const characterTask = tasks.find(task => 
+            task.name.toLowerCase().includes(character.toLowerCase())
+          );
+          
+          if (characterTask) {
+            logger.info(`Found task for ${character} in list ${list.name}: ${characterTask.id}`);
+            return characterTask.id;
+          }
+        } catch (listErr: unknown) {
+          const listError = listErr as ApiError;
+          logger.warn(`Error searching list ${list.id}`, { message: listError.message });
+          // Continue to next list if one fails
+        }
       }
     } catch (err: unknown) {
       const error = err as ApiError;
-      logger.warn(`Could not find task in lists: ${error.message}`);
+      logger.warn(`Error searching space lists`, { message: error.message });
     }
     
     logger.warn(`No task found for character ${character}`);
