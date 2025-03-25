@@ -19,7 +19,7 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
     // Initialize the Gemini 2.0 Pro Experimental model
     // This is the experimental version with enhanced capabilities
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-pro-experimental",
+      model: "gemini-2.0-pro-exp-02-05",
       safetySettings: [
         {
           category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
