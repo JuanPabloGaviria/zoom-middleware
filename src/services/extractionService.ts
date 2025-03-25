@@ -16,8 +16,14 @@ export const extractInformationWithLemur = async (filePath: string): Promise<Ext
     const transcriptionText = await transcribeAudio(filePath);
     logger.info(`Audio transcribed, length: ${transcriptionText.length} characters`);
     
-    // Then extract information using Gemini instead of Lemur
+    // Then extract information using Gemini with the full text
     const results = await extractInformationWithGemini(transcriptionText);
+    
+    // If no results, return empty array but don't throw error
+    if (results.length === 0) {
+      logger.warn('No character/task combinations extracted from audio');
+      return [];
+    }
     
     return results;
   } catch (err: unknown) {

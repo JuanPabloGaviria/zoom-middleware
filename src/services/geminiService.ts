@@ -2,6 +2,8 @@ import { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } from '@google/ge
 import config from '../config/env';
 import logger from '../config/logger';
 import { ExtractedInfo, ApiError } from '../types';
+import fs from 'fs';
+import path from 'path';
 
 // Initialize the Google Generative AI client
 const genAI = new GoogleGenerativeAI(config.gemini.apiKey);
@@ -14,10 +16,20 @@ const genAI = new GoogleGenerativeAI(config.gemini.apiKey);
 export const extractInformationWithGemini = async (text: string): Promise<ExtractedInfo[]> => {
   try {
     logger.info('Extracting information using Google Gemini 2.0 Pro Experimental');
-    logger.info(`Text to analyze: ${text.substring(0, 200)}...`);
+    logger.info(`Text to analyze (first 200 chars): ${text.substring(0, 200)}...`);
     
-    // Initialize the Gemini 2.0 Pro Experimental model
-    // This is the experimental version with enhanced capabilities
+    // For debugging: Write full transcript to file
+    try {
+      const debugDir = path.join(__dirname, '../../debug');
+      if (!fs.existsSync(debugDir)) {
+        fs.mkdirSync(debugDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(debugDir, `transcript_${Date.now()}.txt`), text);
+    } catch (err) {
+      logger.warn('Could not write debug transcript file', { error: (err as Error).message });
+    }
+    
+    // Initialize the model with the correct name
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.0-pro-exp-02-05",
       safetySettings: [
@@ -36,50 +48,45 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
       ]
     });
     
-    // Create more specific prompt focused on exact character and task extraction
+    // Completely revised prompt focused on precise identification
     const prompt = `
-      CONVERSACIÓN DE ANIMACIÓN: EXTRACCIÓN DE PERSONAJES Y TAREAS
-      
-      La siguiente es una transcripción en español de una reunión de animación. Necesito que identifiques con precisión:
-      
-      1. PERSONAJES ANIMADOS mencionados (como Tom, Jerry, etc.)
-      2. TAREAS específicas que deben realizarse para estos personajes
-      3. PROYECTO al que pertenecen (usa "Prj" si no se especifica)
-      
-      INSTRUCCIONES CRÍTICAS:
-      - Analiza con extremo cuidado cada mención de nombres que podrían ser personajes
-      - La transcripción es de una reunión real y los personajes pueden tener nombres como: Tom, Jerry, Alfale, Pietro, Jane, Fairy, Chain, Butterworth, Goodfellow u otros nombres propios
-      - Las tareas pueden incluir: Blocking, Animation, Rigging, Modeling, Texturing, Topology, etc.
-      - Identifica exactamente las tareas mencionadas para cada personaje
-      - NO inventes personajes o tareas que no están explícitamente mencionados
-      - Captura el contexto exacto de lo que se debe hacer con cada personaje
-      - NO CONFUNDAS personas reales (José, Luis, Javier) con personajes animados
-      
-      FORMATO DE RESPUESTA:
-      Devuelve ÚNICAMENTE un objeto JSON válido con este formato exacto:
+      Esta es la transcripción completa de una reunión de animación en español. Necesito que analices el texto y extraigas ÚNICAMENTE los personajes animados mencionados junto con las tareas específicas que se discuten para cada uno.
+
+      REGLAS ESTRICTAS:
+      1. Solo incluye personajes animados que se mencionan EXPLÍCITAMENTE como personajes de animación
+      2. Excluye COMPLETAMENTE nombres que son personas reales (como José, Luis, Javier, etc.)
+      3. Para cada personaje, identifica solo las tareas específicas asignadas (como Blocking, Animation, Modeling, etc.)
+      4. Si no hay tareas específicas asignadas a un personaje, no lo incluyas
+      5. NO INVENTES personajes ni tareas que no estén claramente mencionados
+      6. Si no encuentras ningún personaje de animación, devuelve un array vacío
+      7. Tareas comunes incluyen: Modeling, Animation, Rigging, Blocking, Texturing, Lighting, Topology
+
+      FORMATO DE RESPUESTA JSON:
       {
         "characters": [
           {
             "name": "NombrePersonaje",
             "tasks": ["Tarea1", "Tarea2"],
-            "context": "Descripción breve y exacta de lo que debe hacerse"
+            "context": "Descripción exacta de lo que debe hacerse"
           }
         ],
         "project": "NombreProyecto"
       }
+
+      Si no estás 100% seguro de que algo es un personaje animado, NO lo incluyas.
       
-      TRANSCRIPCIÓN:
+      TRANSCRIPCIÓN COMPLETA:
       ${text}
     `;
     
-    // Generate content with configuration optimized for precise extraction
+    // Generate content with very low temperature for precise extraction
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
-        temperature: 0.1,      // Lower temperature for more precise extraction
-        topP: 0.95,            // Higher topP to allow for more precise outputs
+        temperature: 0.1,
+        topP: 0.95,
         topK: 40,
-        maxOutputTokens: 8192,
+        maxOutputTokens: 4096,
       }
     });
     
@@ -89,7 +96,7 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
     logger.info('Gemini analysis completed');
     logger.info(`Raw Gemini response: ${responseText}`);
     
-    // Improved JSON extraction with robust parsing
+    // Parse JSON with robust error handling
     let parsedData;
     
     try {
@@ -130,16 +137,33 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
           }
         }
       } else {
-        throw new Error('No JSON structure found in Gemini response');
+        // If no JSON structure found, create a default empty structure
+        logger.warn('No JSON structure found, returning empty results');
+        parsedData = { characters: [], project: "Prj" };
       }
     }
     
-    logger.info(`Parsed Gemini data: ${JSON.stringify(parsedData)}`);
-    
-    if (!parsedData.characters || parsedData.characters.length === 0) {
-      logger.error('No characters found in Gemini response');
-      throw new Error('No characters found in Gemini analysis');
+    // Validate the structure
+    if (!parsedData.characters) {
+      parsedData.characters = [];
     }
+    
+    if (!parsedData.project) {
+      parsedData.project = "Prj";
+    }
+    
+    // Post-process to validate characters are actually in the transcript
+    const validatedCharacters = [];
+    for (const character of parsedData.characters) {
+      if (text.toLowerCase().includes(character.name.toLowerCase())) {
+        validatedCharacters.push(character);
+      } else {
+        logger.warn(`Removed character "${character.name}" as it was not found in the transcript`);
+      }
+    }
+    parsedData.characters = validatedCharacters;
+    
+    logger.info(`Parsed Gemini data: ${JSON.stringify(parsedData)}`);
     
     // Map the response to our ExtractedInfo format
     const results: ExtractedInfo[] = [];
@@ -169,13 +193,9 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
       .join(', ');
     
     logger.info(`Found project: ${project}`);
-    logger.info(`Found characters: ${characterNames}`);
-    logger.info(`Found tasks: ${taskNames}`);
+    logger.info(`Found characters: ${characterNames || 'None'}`);
+    logger.info(`Found tasks: ${taskNames || 'None'}`);
     logger.info(`Extracted ${results.length} character/task combinations`);
-    
-    if (results.length === 0) {
-      throw new Error('No character/task combinations extracted');
-    }
     
     return results;
   } catch (err: unknown) {
