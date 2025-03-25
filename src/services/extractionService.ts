@@ -14,113 +14,95 @@ export const extractInformation = (text: string): ExtractedInfo[] => {
     const sampleLength = Math.min(text.length, 150);
     logger.info(`Transcription sample: ${text.substring(0, sampleLength)}...`);
     
-    // Complete transcription for internal processing
-    logger.debug(`Complete transcription: ${text}`);
-
-    // Define patterns for explicit mentions in both Spanish and English
-    const projectPatterns = [
-      /(?:Project|Proyecto|Prj|Projecto|Proj):\s*(\w+)/gi,
-      /(?:para el|para la|en el|en la)\s+(?:Project|Proyecto|Prj|Projecto|Proj)\s+(\w+)/gi,
-      /(?:Project|Proyecto|Prj|Projecto|Proj)\s+(\w+)/gi
-    ];
+    // List of specific characters to detect (case-insensitive)
+    const TARGET_CHARACTERS = ['tom', 'jerry', 'mickey', 'donald'];
     
-    const characterPatterns = [
-      /(?:Character|Personaje|Char|Personage|Personajes):\s*(\w+)/gi,
-      /(?:personaje|character)\s+(?:de|named|llamado)?\s+(\w+)/gi,
-      /(\w+)(?:\s+(?:character|personaje))/gi,
-      /(?:el personaje|el character|la character|character)\s+(\w+)/gi
-    ];
+    // List of specific tasks to detect (case-insensitive)
+    const TARGET_TASKS = ['blocking', 'animation', 'rigging', 'modeling', 'texturing'];
     
-    const taskPatterns = [
-      /(?:Task|Tarea|Trabajo|Actividad):\s*(\w+)/gi,
-      /(?:hacer|realizar|implementar|trabajar en|mejorar|update|actualizar)\s+(?:la|el)?\s*(\w+)/gi,
-      /(?:task|tarea)\s+(?:de|para|on)?\s+(\w+)/gi,
-      /(\w+)(?:\s+(?:task|tarea))/gi
-    ];
+    // Define strict patterns for explicit mentions
+    const projectPattern = /\b(?:project|proyecto|prj)\s*:\s*(\w+)\b/i;
+    const characterPattern = /\b(?:character|personaje|char)\s*:\s*(\w+)\b/i;
+    const taskPattern = /\b(?:task|tarea)\s*:\s*(\w+)\b/i;
     
-    // Common animation-related tasks
-    const knownTasks = [
-      "Blocking", "Animation", "Rigging", "Modeling", "Texturing", 
-      "Rendering", "Compositing", "Lighting", "Efecto", "Effect",
-      "Character", "Design", "Diseño", "Animación", "Bloqueo",
-      "Movimiento", "Movement", "Head", "Cabeza", "Body", "Cuerpo",
-      "Facial", "Expression", "Expresión", "Legs", "Piernas", "Arms",
-      "Brazos", "Voice", "Voz", "Audio", "Sonido", "Sound"
-    ];
-    
-    // Known character names
-    const knownCharacters = [
-      "Tom", "Jerry", "Mickey", "Donald", "Goofy", "Minnie", 
-      "Daisy", "Pluto", "SpongeBob", "Patrick", "Batman", "Superman",
-      "Mario", "Luigi", "Sonic", "Pikachu", "Mr Krabs", "Squidward"
-    ];
-    
+    // Storage for found entities
     let projects: string[] = [];
     let characters: string[] = [];
     let tasks: string[] = [];
-    let match: RegExpExecArray | null;
     
-    // Extract projects using multiple patterns
-    for (const pattern of projectPatterns) {
-      while ((match = pattern.exec(text)) !== null) {
-        if (match[1] && !projects.includes(match[1])) {
-          projects.push(match[1]);
+    // Extract explicit project mentions
+    const projectMatches = text.match(new RegExp(projectPattern, 'gi')) || [];
+    for (const match of projectMatches) {
+      const result = projectPattern.exec(match);
+      if (result && result[1]) {
+        const project = result[1].trim();
+        if (project && !projects.includes(project)) {
+          projects.push(project);
         }
       }
     }
     
-    // Extract characters using multiple patterns
-    for (const pattern of characterPatterns) {
-      while ((match = pattern.exec(text)) !== null) {
-        if (match[1] && !characters.includes(match[1])) {
-          characters.push(match[1]);
+    // Extract explicit character mentions
+    const characterMatches = text.match(new RegExp(characterPattern, 'gi')) || [];
+    for (const match of characterMatches) {
+      const result = characterPattern.exec(match);
+      if (result && result[1]) {
+        const character = result[1].trim();
+        // Validate: Only accept known characters or explicitly mentioned ones
+        if (character && 
+            (TARGET_CHARACTERS.includes(character.toLowerCase()) || 
+             match.toLowerCase().includes('character:') || 
+             match.toLowerCase().includes('personaje:')) && 
+            !characters.includes(character)) {
+          characters.push(character);
         }
       }
     }
     
-    // Extract tasks using multiple patterns
-    for (const pattern of taskPatterns) {
-      while ((match = pattern.exec(text)) !== null) {
-        if (match[1] && !tasks.includes(match[1])) {
-          tasks.push(match[1]);
+    // Extract explicit task mentions
+    const taskMatches = text.match(new RegExp(taskPattern, 'gi')) || [];
+    for (const match of taskMatches) {
+      const result = taskPattern.exec(match);
+      if (result && result[1]) {
+        const task = result[1].trim();
+        // Validate: Only accept known tasks or explicitly mentioned ones
+        if (task && 
+            (TARGET_TASKS.includes(task.toLowerCase()) || 
+             match.toLowerCase().includes('task:') || 
+             match.toLowerCase().includes('tarea:')) && 
+            !tasks.includes(task)) {
+          tasks.push(task);
         }
       }
     }
     
-    // If explicit patterns didn't find characters, search for known character names
+    // Secondary phase: Look for target characters by name if none found yet
     if (characters.length === 0) {
-      logger.info('No explicit character mentions found, searching for known character names');
-      
-      // Check for character names in the text
-      for (const character of knownCharacters) {
-        const regex = new RegExp(`\\b${character}\\b`, 'i');
-        if (regex.test(text)) {
-          logger.info(`Found character by name: ${character}`);
-          if (!characters.includes(character)) {
-            characters.push(character);
-          }
+      for (const character of TARGET_CHARACTERS) {
+        // Use word boundary to avoid partial matches
+        const characterRegex = new RegExp(`\\b${character}\\b`, 'i');
+        if (characterRegex.test(text)) {
+          logger.info(`Found target character: ${character}`);
+          characters.push(character);
         }
       }
     }
     
-    // If no tasks were identified, search for known task types
+    // Secondary phase: Look for target tasks by name if none found yet
     if (tasks.length === 0) {
-      logger.info('No explicit task mentions found, searching for known task types');
-      
-      for (const task of knownTasks) {
-        const regex = new RegExp(`\\b${task}\\b`, 'i');
-        if (regex.test(text)) {
-          logger.info(`Found task by name: ${task}`);
-          if (!tasks.includes(task)) {
-            tasks.push(task);
-          }
+      for (const task of TARGET_TASKS) {
+        // Use word boundary to avoid partial matches
+        const taskRegex = new RegExp(`\\b${task}\\b`, 'i');
+        if (taskRegex.test(text)) {
+          logger.info(`Found target task: ${task}`);
+          tasks.push(task);
         }
       }
     }
     
-    // Default project if needed
+    // Default project if needed - only use "Prj" as specified
     if (projects.length === 0) {
-      projects = ['Prj']; // Default project
+      projects = ['Prj']; // Default project as specified in requirements
       logger.info('No projects found, using default project: Prj');
     }
     
@@ -129,67 +111,58 @@ export const extractInformation = (text: string): ExtractedInfo[] => {
     logger.info(`Found characters: ${characters.join(', ')}`);
     logger.info(`Found tasks: ${tasks.join(', ')}`);
     
-    // Exit early if no characters or tasks found
+    // Exit if no characters or tasks identified
     if (characters.length === 0 || tasks.length === 0) {
-      logger.warn('Insufficient information found (missing characters or tasks)');
+      logger.warn('No valid characters or tasks found in transcription');
       return [];
     }
     
-    // Analyze context and create task-character associations
+    // Match characters to tasks with context
     const results: ExtractedInfo[] = [];
     
-    // Find sentences containing both character and task mentions
+    // Break text into sentences for context analysis
     const sentences = text.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 0);
-    const characterTaskPairs: Map<string, string[]> = new Map();
     
-    // First attempt to find direct associations in the same sentence
+    // For each character, try to find associated tasks
     for (const character of characters) {
+      // Find sentences mentioning this character
       const characterRegex = new RegExp(`\\b${character}\\b`, 'i');
       const characterSentences = sentences.filter(s => characterRegex.test(s));
       
-      const associatedTasks: string[] = [];
+      // If specific task associations found in sentences
+      let associatedTasks: string[] = [];
       
       for (const task of tasks) {
         const taskRegex = new RegExp(`\\b${task}\\b`, 'i');
-        const hasTaskMention = characterSentences.some(s => taskRegex.test(s));
+        // Check if any sentence contains both character and task
+        const hasAssociation = characterSentences.some(s => taskRegex.test(s));
         
-        if (hasTaskMention) {
+        if (hasAssociation) {
           associatedTasks.push(task);
         }
       }
       
-      if (associatedTasks.length > 0) {
-        characterTaskPairs.set(character, associatedTasks);
-      } else if (tasks.length > 0) {
-        // If no direct association found, assign the first task
-        characterTaskPairs.set(character, [tasks[0]]);
+      // If no specific associations found, use the first task
+      if (associatedTasks.length === 0 && tasks.length > 0) {
+        associatedTasks = [tasks[0]];
       }
-    }
-    
-    // Generate results based on associations
-    for (const [character, characterTasks] of characterTaskPairs.entries()) {
-      for (const task of characterTasks) {
-        // Find a context sentence for this character-task pair
-        const context = findContextSentence(text, character, task);
+      
+      // Create entries for each character-task combination
+      for (const task of associatedTasks) {
+        // Find most relevant context sentence
+        const context = findBestContextSentence(sentences, character, task);
         
         results.push({
-          project: projects[0], // Use the first project
+          project: projects[0],
           character,
           task,
           context: context || "",
-          confidence: 0.9 // Maintain compatibility with existing code
+          confidence: 0.9
         });
       }
     }
     
     logger.info(`Extracted ${results.length} character/task combinations`);
-    
-    // If still no results, exit gracefully rather than using hardcoded values
-    if (results.length === 0) {
-      logger.warn('Unable to extract actionable character/task combinations from transcript');
-      return [];
-    }
-    
     return results;
   } catch (err: unknown) {
     const error = err as ApiError;
@@ -199,41 +172,34 @@ export const extractInformation = (text: string): ExtractedInfo[] => {
 };
 
 /**
- * Finds a sentence that best represents the context for a character-task pair
- * @param text - The text to search in
- * @param character - The character name
- * @param task - The task name
- * @returns The most relevant context sentence, or null if not found
+ * Finds the best context sentence for a character-task pair
+ * @param sentences - Array of sentences from the text
+ * @param character - Character name to find
+ * @param task - Task name to find
+ * @returns The best context sentence or null if none found
  */
-const findContextSentence = (text: string, character: string, task: string): string | null => {
-  const sentences = text.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 0);
-  
-  // First, look for sentences containing both character and task
+function findBestContextSentence(sentences: string[], character: string, task: string): string | null {
   const characterRegex = new RegExp(`\\b${character}\\b`, 'i');
   const taskRegex = new RegExp(`\\b${task}\\b`, 'i');
   
-  const bothMentions = sentences.filter(s => 
-    characterRegex.test(s) && taskRegex.test(s)
-  );
-  
-  if (bothMentions.length > 0) {
-    // Return the shortest sentence that mentions both (likely more concise)
-    return bothMentions.sort((a, b) => a.length - b.length)[0];
+  // First priority: Sentences containing both character and task mentions
+  const jointMentions = sentences.filter(s => characterRegex.test(s) && taskRegex.test(s));
+  if (jointMentions.length > 0) {
+    // Return the shortest one for conciseness
+    return jointMentions.sort((a, b) => a.length - b.length)[0];
   }
   
-  // Next, look for sentences mentioning the character
+  // Second priority: Sentences containing character mentions
   const characterMentions = sentences.filter(s => characterRegex.test(s));
-  
   if (characterMentions.length > 0) {
     return characterMentions[0];
   }
   
-  // Fall back to task mentions if no character mentions found
+  // Third priority: Sentences containing task mentions
   const taskMentions = sentences.filter(s => taskRegex.test(s));
-  
   if (taskMentions.length > 0) {
     return taskMentions[0];
   }
   
   return null;
-};
+}
