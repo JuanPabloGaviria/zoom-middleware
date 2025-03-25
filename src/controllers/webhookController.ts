@@ -1,8 +1,7 @@
 import { Request, Response } from 'express';
 import logger from '../config/logger';
 import { downloadFile, convertToMp3, cleanupFiles } from '../services/audioService';
-import { transcribeAudio } from '../services/transcriptionService';
-import { extractInformation } from '../services/extractionService';
+import { extractInformationWithLemur } from '../services/extractionService';
 import { updateClickUpTask } from '../services/clickupService';
 import { ZoomWebhookEvent, ApiError } from '../types';
 
@@ -60,35 +59,38 @@ const processRecording = async (webhookData: ZoomWebhookEvent): Promise<void> =>
     
     // Download file
     const downloadToken = meeting.download_token;
+    logger.info(`Downloading recording from URL: ${audioRecording.download_url}`);
     const downloadedFilePath = await downloadFile(audioRecording.download_url, downloadToken);
     filesToCleanup.push(downloadedFilePath);
     
     // Convert to MP3
+    logger.info(`Converting downloaded file to MP3: ${downloadedFilePath}`);
     const mp3FilePath = await convertToMp3(downloadedFilePath);
     filesToCleanup.push(mp3FilePath);
     
-    // Transcribe audio
-    const transcription = await transcribeAudio(mp3FilePath);
+    // Extract information using Lemur
+    logger.info(`Extracting information from MP3 file: ${mp3FilePath}`);
+    const extractedInfos = await extractInformationWithLemur(mp3FilePath);
     
-    // Extract information
-    const extractedInfos = extractInformation(transcription);
-    
-    if (extractedInfos.length === 0) {
-      logger.warn('No character/task information extracted from transcription');
-      return;
-    }
+    logger.info(`Successfully extracted ${extractedInfos.length} character/task combinations`);
     
     // Update ClickUp for each extracted info
     for (const info of extractedInfos) {
+      logger.info(`Updating ClickUp for character: ${info.character}, task: ${info.task}`);
       await updateClickUpTask(info);
+      logger.info(`Successfully updated ClickUp for character: ${info.character}`);
     }
     
-    logger.info(`Successfully processed ${extractedInfos.length} characters from meeting ${meeting.topic}`);
+    logger.info(`Successfully processed all ${extractedInfos.length} characters from meeting ${meeting.topic}`);
   } catch (err: unknown) {
     const error = err as ApiError;
-    logger.error('Error processing recording', { message: error.message });
+    logger.error('Error processing recording', { message: error.message, stack: error.stack });
+    throw error;
   } finally {
     // Clean up temporary files
-    await cleanupFiles(filesToCleanup);
+    if (filesToCleanup.length > 0) {
+      logger.info(`Cleaning up ${filesToCleanup.length} temporary files`);
+      await cleanupFiles(filesToCleanup);
+    }
   }
 };

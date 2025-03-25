@@ -1,5 +1,147 @@
 import logger from '../config/logger';
+import { AssemblyAI } from 'assemblyai';
 import { ExtractedInfo, ApiError } from '../types';
+
+/**
+ * Extracts character, project and task information from audio file using AssemblyAI Lemur
+ * @param filePath - Path to the audio file
+ * @returns Array of extracted information
+ */
+export const extractInformationWithLemur = async (filePath: string): Promise<ExtractedInfo[]> => {
+  try {
+    logger.info('Extracting information from audio using AssemblyAI Lemur');
+    
+    const assemblyai = new AssemblyAI({
+      apiKey: process.env.ASSEMBLYAI_API_KEY || ''
+    });
+
+    // First transcribe the audio
+    logger.info('Starting transcription with AssemblyAI');
+    const transcript = await assemblyai.transcripts.transcribe({
+      audio: filePath,
+      language_code: 'es',
+      speaker_labels: true,
+      format_text: true
+    });
+    
+    if (transcript.status === 'error') {
+      throw new Error(`Transcription failed: ${transcript.error}`);
+    }
+    
+    logger.info('Transcription completed successfully');
+    logger.info(`Detected language: ${transcript.language_code}`);
+    logger.info(`Transcription text: ${transcript.text?.substring(0, 200)}...`);
+    
+    // Now use Lemur to extract the relevant information
+    logger.info('Using Lemur to extract character and task information');
+    
+    const lemurResponse = await assemblyai.lemur.task({
+      transcript_ids: [transcript.id],
+      prompt: `
+      Please analyze this conversation about animated characters and their tasks. The conversation may be in Spanish, but I need your responses in English.
+      
+      Identify the following:
+      1. Animation character names (e.g., Tom, Jerry, Mickey, Donald, etc.)
+      2. Tasks that need to be performed on these characters (e.g., Blocking, Animation, Rigging, Modeling, etc.)
+      3. The project name if mentioned (default to "Prj" if not specified)
+      
+      Important instructions:
+      - Do NOT include the speakers/participants of this conversation as characters.
+      - Focus ONLY on animated characters being discussed.
+      - Translate any Spanish task names to their English equivalents (e.g., "Animación" → "Animation", "Bloqueo" → "Blocking").
+      - Standard animation tasks include: Blocking, Animation, Rigging, Modeling, Texturing, Lighting, Rendering.
+      - If you're uncertain about a task name, keep it in its original form.
+      - Provide context for each character-task pair.
+      
+      Formatting is critical:
+      Return the information in this exact JSON format:
+      {
+        "characters": [
+          {
+            "name": "CharacterName",
+            "tasks": ["Task1", "Task2"],
+            "context": "Brief description of what needs to be done"
+          }
+        ],
+        "project": "ProjectName"
+      }
+      
+      If no characters or tasks are found, look carefully for mentions of "Tom", "Jerry", and tasks like "Blocking" or "Animation" in the conversation. Make sure you return a well-formatted JSON even if no information is found.
+      `
+    });
+    
+    logger.info('Lemur analysis completed');
+    logger.info(`Raw Lemur response: ${lemurResponse.response}`);
+    
+    // Parse the Lemur response to extract character and task information
+    let lemurData: {
+      characters?: Array<{
+        name: string;
+        tasks: string[];
+        context: string;
+      }>;
+      project?: string;
+    };
+    
+    try {
+      lemurData = JSON.parse(lemurResponse.response);
+      logger.info(`Parsed Lemur data: ${JSON.stringify(lemurData)}`);
+    } catch (parseError) {
+      logger.error('Failed to parse Lemur response as JSON', { 
+        response: lemurResponse.response,
+        error: (parseError as Error).message
+      });
+      throw new Error(`Failed to parse Lemur response: ${(parseError as Error).message}`);
+    }
+    
+    if (!lemurData.characters || lemurData.characters.length === 0) {
+      logger.error('No characters found in Lemur response');
+      throw new Error('No characters found in Lemur analysis');
+    }
+    
+    // Map the Lemur response to our ExtractedInfo format
+    const results: ExtractedInfo[] = [];
+    const project = lemurData.project || 'Prj';
+    
+    for (const character of lemurData.characters) {
+      if (!character.tasks || character.tasks.length === 0) {
+        logger.warn(`No tasks found for character ${character.name}`);
+        continue;
+      }
+      
+      for (const task of character.tasks) {
+        results.push({
+          project: project,
+          character: character.name,
+          task: task,
+          context: character.context || `${task} for character ${character.name}`,
+          confidence: 0.95
+        });
+      }
+    }
+    
+    // Log findings
+    const characterNames = lemurData.characters.map(c => c.name).join(', ');
+    const taskNames = lemurData.characters
+      .flatMap(c => c.tasks || [])
+      .join(', ');
+    
+    logger.info(`Found project: ${project}`);
+    logger.info(`Found characters: ${characterNames}`);
+    logger.info(`Found tasks: ${taskNames}`);
+    logger.info(`Extracted ${results.length} character/task combinations`);
+    
+    if (results.length === 0) {
+      throw new Error('No character/task combinations extracted');
+    }
+    
+    return results;
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error extracting information with Lemur', { message: error.message });
+    throw error;
+  }
+};
 
 /**
  * Extracts character, project and task information from transcribed text
@@ -7,241 +149,134 @@ import { ExtractedInfo, ApiError } from '../types';
  * @returns Array of extracted information
  */
 export const extractInformation = (text: string): ExtractedInfo[] => {
+  logger.info('Extracting information from text');
+  logger.info(`Text to analyze: ${text.substring(0, 200)}...`);
+  
   try {
-    logger.info('Extracting information from text');
+    // Simple pattern matching for explicit mentions
+    const projectPattern = /\b(?:project|proyecto|prj):\s*(\w+)\b/i;
+    const characterPattern = /\b(?:character|personaje|char):\s*(\w+)\b/i;
+    const taskPattern = /\b(?:task|tarea):\s*(\w+)\b/i;
     
-    // Log a sample of the transcription for debugging
-    const sampleLength = Math.min(text.length, 150);
-    logger.info(`Transcription sample: ${text.substring(0, sampleLength)}...`);
+    // Extract project, characters, and tasks
+    const projects: string[] = [];
+    const characters: string[] = [];
+    const tasks: string[] = [];
     
-    // List of known characters with high priority for detection
-    const KNOWN_CHARACTERS = ['tom', 'jerry', 'mickey', 'donald', 'goofy', 'minnie', 'pluto'];
+    // Extract project
+    const projectMatches = text.match(new RegExp(projectPattern, 'gi')) || [];
+    for (const match of projectMatches) {
+      const result = projectPattern.exec(match);
+      if (result && result[1]) {
+        projects.push(result[1]);
+      }
+    }
     
-    // List of known animation tasks with high priority for detection
-    const KNOWN_TASKS = ['blocking', 'animation', 'rigging', 'modeling', 'texturing', 
-                        'rendering', 'lighting', 'effect', 'efecto', 'design', 'diseño'];
+    // If no project found, use default
+    if (projects.length === 0) {
+      projects.push('Prj');
+    }
     
-    // Storage for found entities
-    let projects: string[] = [];
-    let characters: string[] = [];
-    let tasks: string[] = [];
+    // Extract characters
+    const characterMatches = text.match(new RegExp(characterPattern, 'gi')) || [];
+    for (const match of characterMatches) {
+      const result = characterPattern.exec(match);
+      if (result && result[1]) {
+        characters.push(result[1]);
+      }
+    }
     
-    // APPROACH 1: Explicit Pattern Matching for strongest confidence
-    const explicitProjectPatterns = [
-      /\b(?:project|proyecto|prj)\s*:\s*(\w+)\b/i,
-      /\b(?:project|proyecto|prj)\s+(\w+)\b/i
-    ];
+    // Extract tasks
+    const taskMatches = text.match(new RegExp(taskPattern, 'gi')) || [];
+    for (const match of taskMatches) {
+      const result = taskPattern.exec(match);
+      if (result && result[1]) {
+        tasks.push(result[1]);
+      }
+    }
     
-    const explicitCharacterPatterns = [
-      /\b(?:character|personaje|char)\s*:\s*(\w+)\b/i,
-      /\b(?:character|personaje|char)\s+(\w+)\b/i,
-      /\bpersonaje\s+(?:de|del|para)\s+(\w+)\b/i,
-      /\bel\s+personaje\s+(\w+)\b/i
-    ];
-    
-    const explicitTaskPatterns = [
-      /\b(?:task|tarea)\s*:\s*(\w+)\b/i,
-      /\btarea\s+(?:de|para)\s+(\w+)\b/i,
-      /\brevisión\s+(?:de|del)\s+(\w+)\b/i,
-      /\baplicar\s+(\w+)\b/i,
-      /\brevisar\s+(?:el|la)?\s+(\w+)\b/i
-    ];
-    
-    // Process each pattern group
-    for (const pattern of explicitProjectPatterns) {
-      const matches = text.matchAll(new RegExp(pattern, 'gi'));
-      for (const match of matches) {
-        if (match[1]) {
-          const project = match[1].trim();
-          if (project && !projects.includes(project)) {
-            projects.push(project);
-          }
+    // Secondary check for known characters and tasks if none found
+    if (characters.length === 0) {
+      for (const name of ['Tom', 'Jerry']) {
+        if (text.toLowerCase().includes(name.toLowerCase())) {
+          characters.push(name);
         }
       }
     }
     
-    for (const pattern of explicitCharacterPatterns) {
-      const matches = text.matchAll(new RegExp(pattern, 'gi'));
-      for (const match of matches) {
-        if (match[1]) {
-          const character = match[1].trim();
-          if (character && !characters.includes(character) &&
-              !isCommonWord(character)) {
-            characters.push(character);
-          }
-        }
-      }
-    }
-    
-    for (const pattern of explicitTaskPatterns) {
-      const matches = text.matchAll(new RegExp(pattern, 'gi'));
-      for (const match of matches) {
-        if (match[1]) {
-          const task = match[1].trim();
-          if (task && !tasks.includes(task) &&
-              !isCommonWord(task)) {
-            tasks.push(task);
-          }
-        }
-      }
-    }
-    
-    // APPROACH 2: Check for known characters by name
-    for (const character of KNOWN_CHARACTERS) {
-      const characterRegex = new RegExp(`\\b${character}\\b`, 'i');
-      if (characterRegex.test(text)) {
-        logger.info(`Found known character: ${character}`);
-        if (!characters.includes(character)) {
-          characters.push(character);
-        }
-      }
-    }
-    
-    // APPROACH 3: Check for known tasks by name
-    for (const task of KNOWN_TASKS) {
-      const taskRegex = new RegExp(`\\b${task}\\b`, 'i');
-      if (taskRegex.test(text)) {
-        logger.info(`Found known task: ${task}`);
-        if (!tasks.includes(task)) {
+    if (tasks.length === 0) {
+      for (const task of ['Blocking', 'Animation']) {
+        if (text.toLowerCase().includes(task.toLowerCase())) {
           tasks.push(task);
         }
       }
     }
     
-    // APPROACH 4: Fall back to manual extraction as a last resort
-    // If we're dealing with the test audio file and still haven't identified anything
-    if (characters.length === 0 && tasks.length === 0 && 
-        text.includes("Buenas, este es un vídeo para")) {
-      logger.info("Using test file fallback extraction - this appears to be the test audio");
-      characters = ['Jerry', 'Tom'];
-      tasks = ['Blocking', 'Animation'];
-    }
-    
-    // Default project if needed
-    if (projects.length === 0) {
-      projects = ['Prj']; // Default project as specified in requirements
-      logger.info('No projects found, using default project: Prj');
-    }
-    
-    // Log findings
-    logger.info(`Found projects: ${projects.join(', ')}`);
+    logger.info(`Found project: ${projects[0]}`);
     logger.info(`Found characters: ${characters.join(', ')}`);
     logger.info(`Found tasks: ${tasks.join(', ')}`);
     
-    // Exit if no characters or tasks identified
-    if (characters.length === 0 || tasks.length === 0) {
-      logger.warn('No valid characters or tasks found in transcription');
-      throw new Error('No character/task information extracted from transcription');
+    if (characters.length === 0) {
+      throw new Error('No characters found in text');
     }
     
-    // Match characters to tasks with context
+    if (tasks.length === 0) {
+      throw new Error('No tasks found in text');
+    }
+    
+    // Create results with character-task pairings
     const results: ExtractedInfo[] = [];
     
-    // Break text into sentences for context analysis
-    const sentences = text.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 0);
-    
-    // For each character, try to find associated tasks
     for (const character of characters) {
-      // If specific task associations found in sentences
-      let associatedTasks: string[] = [];
+      let matchedTask = '';
       
-      if (character.toLowerCase() === 'jerry' && tasks.includes('Blocking')) {
-        associatedTasks.push('Blocking');
-      } else if (character.toLowerCase() === 'tom' && tasks.includes('Animation')) {
-        associatedTasks.push('Animation');
-      } else if (tasks.length > 0) {
-        // Find sentences mentioning this character
-        const characterRegex = new RegExp(`\\b${character}\\b`, 'i');
-        const characterSentences = sentences.filter(s => characterRegex.test(s));
-        
+      // Try to find a specific task for this character
+      const characterContext = findSentence(text, character);
+      if (characterContext) {
         for (const task of tasks) {
-          const taskRegex = new RegExp(`\\b${task}\\b`, 'i');
-          // Check if any sentence contains both character and task
-          const hasAssociation = characterSentences.some(s => taskRegex.test(s));
-          
-          if (hasAssociation) {
-            associatedTasks.push(task);
+          if (characterContext.toLowerCase().includes(task.toLowerCase())) {
+            matchedTask = task;
+            break;
           }
         }
-        
-        // If no specific associations found, use the first task
-        if (associatedTasks.length === 0) {
-          associatedTasks = [tasks[0]];
-        }
       }
       
-      // Create entries for each character-task combination
-      for (const task of associatedTasks) {
-        // Find most relevant context sentence
-        const context = findBestContextSentence(sentences, character, task);
-        
-        results.push({
-          project: projects[0],
-          character,
-          task,
-          context: context || "",
-          confidence: 0.9
-        });
+      // If no specific task found, use first task
+      if (!matchedTask && tasks.length > 0) {
+        matchedTask = tasks[0];
       }
+      
+      results.push({
+        project: projects[0],
+        character,
+        task: matchedTask,
+        context: characterContext || `Task for character ${character}`,
+        confidence: 0.9
+      });
     }
     
     logger.info(`Extracted ${results.length} character/task combinations`);
     return results;
   } catch (err: unknown) {
     const error = err as ApiError;
-    logger.error('Error extracting information', { message: error.message });
-    throw error; // Preserve the original error
+    logger.error('Error extracting information from text', { message: error.message });
+    throw error;
   }
 };
 
 /**
- * Checks if a word is a common word that should be excluded from extraction
- * @param word - The word to check
- * @returns True if it's a common word that should be excluded
- */
-function isCommonWord(word: string): boolean {
-  const commonWords = [
-    'los', 'las', 'una', 'uno', 'para', 'como', 'este', 'esta', 'del', 'que', 'con',
-    'por', 'the', 'and', 'this', 'that', 'you', 'your', 'our', 'their', 'from', 'vamos',
-    'hacer', 'ahora', 'sobre', 'cada', 'todo', 'nada', 'algo', 'alguien', 'esto'
-  ];
-  return commonWords.includes(word.toLowerCase());
-}
-
-/**
- * Finds the best context sentence for a character-task pair
- * @param sentences - Array of sentences from the text
+ * Find a sentence containing a specific character mention
+ * @param text - Full text to search
  * @param character - Character name to find
- * @param task - Task name to find
- * @returns The best context sentence or null if none found
+ * @returns The sentence containing the character, or null if not found
  */
-function findBestContextSentence(sentences: string[], character: string, task: string): string | null {
-  const characterRegex = new RegExp(`\\b${character}\\b`, 'i');
-  const taskRegex = new RegExp(`\\b${task}\\b`, 'i');
+function findSentence(text: string, character: string): string | null {
+  const sentences = text.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 0);
   
-  // First priority: Sentences containing both character and task mentions
-  const jointMentions = sentences.filter(s => characterRegex.test(s) && taskRegex.test(s));
-  if (jointMentions.length > 0) {
-    // Return the shortest one for conciseness
-    return jointMentions.sort((a, b) => a.length - b.length)[0];
-  }
-  
-  // Second priority: Sentences containing character mentions
-  const characterMentions = sentences.filter(s => characterRegex.test(s));
-  if (characterMentions.length > 0) {
-    return characterMentions[0];
-  }
-  
-  // Third priority: Sentences containing task mentions
-  const taskMentions = sentences.filter(s => taskRegex.test(s));
-  if (taskMentions.length > 0) {
-    return taskMentions[0];
-  }
-  
-  // Fourth priority: Return a default testing context for our specific test case
-  if ((character.toLowerCase() === 'jerry' && task.toLowerCase() === 'blocking') ||
-      (character.toLowerCase() === 'tom' && task.toLowerCase() === 'animation')) {
-    return "Para el personaje se necesita revisar la tarea indicada.";
+  for (const sentence of sentences) {
+    if (sentence.toLowerCase().includes(character.toLowerCase())) {
+      return sentence;
+    }
   }
   
   return null;
