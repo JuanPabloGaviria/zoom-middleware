@@ -14,6 +14,10 @@ export default {
     apiKey: process.env.OPENAI_API_KEY || ''
   },
   
+  assemblyai: {
+    apiKey: process.env.ASSEMBLY_AI_API_KEY || ''
+  },
+  
   clickup: {
     apiKey: process.env.CLICKUP_API_KEY || '',
     clientId: process.env.CLICKUP_CLIENT_ID || '',

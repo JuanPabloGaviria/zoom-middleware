@@ -109,6 +109,135 @@ export const getLists = async (spaceId: string): Promise<ClickUpList[]> => {
 };
 
 /**
+ * Get folders for a space
+ * @param spaceId - The ClickUp space ID
+ * @returns Array of folders
+ */
+export const getFolders = async (spaceId: string): Promise<any[]> => {
+  try {
+    logger.info(`Fetching folders for space ${spaceId}`);
+    
+    const response = await axios.get(`${CLICKUP_API_URL}/space/${spaceId}/folder`, {
+      headers: {
+        'Authorization': API_KEY
+      }
+    });
+    
+    if (!response.data || !response.data.folders) {
+      throw new Error('Invalid response format from ClickUp API');
+    }
+    
+    return response.data.folders;
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error fetching ClickUp folders', { 
+      spaceId,
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message 
+    });
+    throw new Error(`Failed to fetch folders: ${error.message}`);
+  }
+};
+
+/**
+ * Get tasks in a folder
+ * @param folderId - The ClickUp folder ID
+ * @returns Array of tasks
+ */
+export const getTasksInFolder = async (folderId: string): Promise<ClickUpTask[]> => {
+  try {
+    logger.info(`Fetching tasks in folder ${folderId}`);
+    
+    const response = await axios.get(`${CLICKUP_API_URL}/folder/${folderId}/task`, {
+      headers: {
+        'Authorization': API_KEY
+      }
+    });
+    
+    if (!response.data || !response.data.tasks) {
+      throw new Error('Invalid response format from ClickUp API');
+    }
+    
+    return response.data.tasks;
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error fetching tasks in folder', { 
+      folderId,
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message 
+    });
+    throw new Error(`Failed to fetch tasks in folder: ${error.message}`);
+  }
+};
+
+/**
+ * Create a new list in a space
+ * @param spaceId - The ClickUp space ID
+ * @param name - The name for the new list
+ * @returns ID of the created list
+ */
+export const createList = async (spaceId: string, name: string): Promise<string> => {
+  try {
+    logger.info(`Creating new list "${name}" in space ${spaceId}`);
+    
+    const response = await axios.post(
+      `${CLICKUP_API_URL}/space/${spaceId}/list`,
+      { name },
+      {
+        headers: {
+          'Authorization': API_KEY,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    if (!response.data || !response.data.id) {
+      throw new Error('Invalid response format from ClickUp API');
+    }
+    
+    logger.info(`Created new list: ${name} (${response.data.id})`);
+    return response.data.id;
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error creating ClickUp list', { 
+      spaceId,
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message 
+    });
+    throw new Error(`Failed to create list: ${error.message}`);
+  }
+};
+
+/**
+ * Get or create a list in a space
+ * @param spaceId - The ClickUp space ID
+ * @returns ID of an existing or newly created list
+ */
+export const getOrCreateList = async (spaceId: string): Promise<string> => {
+  try {
+    const lists = await getLists(spaceId);
+    
+    if (lists.length > 0) {
+      // Use existing list
+      const list = lists[0];
+      logger.info(`Using existing list: ${list.name} (${list.id})`);
+      return list.id;
+    }
+    
+    // No lists found, create one
+    logger.info(`No lists found in space ${spaceId}, creating new list`);
+    return await createList(spaceId, "Characters");
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error getting or creating list', { message: error.message });
+    throw error;
+  }
+};
+
+/**
  * Search tasks by character name
  * @param listId - The ClickUp list ID
  * @param characterName - The character name to search for
@@ -142,6 +271,58 @@ export const searchTasks = async (listId: string, characterName: string): Promis
       message: error.message 
     });
     throw new Error(`Failed to search tasks: ${error.message}`);
+  }
+};
+
+/**
+ * Find task for a character by searching in all relevant places
+ * @param spaceId - The ClickUp space ID
+ * @param character - Character name to search for
+ * @returns Task ID if found
+ */
+export const findTaskForCharacter = async (spaceId: string, character: string): Promise<string | null> => {
+  try {
+    logger.info(`Finding task for character ${character} in space ${spaceId}`);
+    
+    // First check folders (especially the "Prj" folder)
+    const folders = await getFolders(spaceId);
+    const prjFolder = folders.find(folder => folder.name === "Prj" || folder.name.toLowerCase().includes("prj"));
+    
+    if (prjFolder) {
+      logger.info(`Found "Prj" folder: ${prjFolder.id}`);
+      const tasksInFolder = await getTasksInFolder(prjFolder.id);
+      
+      // Look for task with character name
+      const characterTask = tasksInFolder.find(task => 
+        task.name.toLowerCase().includes(character.toLowerCase())
+      );
+      
+      if (characterTask) {
+        logger.info(`Found task for ${character} in folder: ${characterTask.id}`);
+        return characterTask.id;
+      }
+    }
+    
+    // If not found in folders, try lists
+    try {
+      const listId = await getOrCreateList(spaceId);
+      const tasksInList = await searchTasks(listId, character);
+      
+      if (tasksInList.length > 0) {
+        logger.info(`Found task for ${character} in list: ${tasksInList[0].id}`);
+        return tasksInList[0].id;
+      }
+    } catch (err: unknown) {
+      const error = err as ApiError;
+      logger.warn(`Could not find task in lists: ${error.message}`);
+    }
+    
+    logger.warn(`No task found for character ${character}`);
+    return null;
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error(`Error finding task for character ${character}`, { message: error.message });
+    return null;
   }
 };
 
@@ -213,6 +394,49 @@ export const createChecklist = async (taskId: string, name: string, items: Check
 };
 
 /**
+ * Create a new task for a character
+ * @param listId - The ClickUp list ID
+ * @param character - Character name
+ * @returns ID of the created task
+ */
+export const createTask = async (listId: string, character: string): Promise<string> => {
+  try {
+    logger.info(`Creating new task for character ${character} in list ${listId}`);
+    
+    const response = await axios.post(
+      `${CLICKUP_API_URL}/list/${listId}/task`,
+      { 
+        name: `${character} character`,
+        description: `Task for character ${character} created automatically`
+      },
+      {
+        headers: {
+          'Authorization': API_KEY,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    if (!response.data || !response.data.id) {
+      throw new Error('Invalid response format from ClickUp API');
+    }
+    
+    logger.info(`Created new task for ${character}: ${response.data.id}`);
+    return response.data.id;
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error creating task', { 
+      listId,
+      character,
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message 
+    });
+    throw new Error(`Failed to create task: ${error.message}`);
+  }
+};
+
+/**
  * Generate checklist items based on task type
  * @param taskType - The type of task
  * @returns Array of checklist items
@@ -280,33 +504,21 @@ export const updateClickUpTask = async (info: ExtractedInfo): Promise<void> => {
       }
     }
     
-    // Get lists
-    const lists = await getLists(spaceId);
-    if (lists.length === 0) {
-      throw new Error('No lists found in ClickUp');
-    }
+    // Find task for the character
+    let taskId = await findTaskForCharacter(spaceId, info.character);
     
-    // Find a relevant list or use the first one
-    let listId = lists[0].id;
-    for (const list of lists) {
-      if (list.name.toLowerCase().includes('character') || 
-          list.name.toLowerCase().includes('personaje')) {
-        listId = list.id;
-        logger.info(`Found relevant list: ${list.name}`);
-        break;
+    // If not found, try to create a new task
+    if (!taskId) {
+      logger.info(`No existing task found for ${info.character}, creating new task`);
+      try {
+        const listId = await getOrCreateList(spaceId);
+        taskId = await createTask(listId, info.character);
+      } catch (err: unknown) {
+        const error = err as ApiError;
+        logger.error(`Failed to create task for ${info.character}`, { message: error.message });
+        throw new Error(`Could not find or create task for ${info.character}`);
       }
     }
-    
-    // Search for tasks by character name
-    const tasks = await searchTasks(listId, info.character);
-    if (tasks.length === 0) {
-      logger.warn(`No tasks found for character ${info.character}`);
-      return;
-    }
-    
-    // Use the first matching task
-    const taskId = tasks[0].id;
-    logger.info(`Found task: ${tasks[0].name}`);
     
     // Add comment to task
     const commentText = `Update from Zoom meeting: ${info.task} required for character ${info.character}. ${info.context ? `Context: ${info.context}` : ''}`;
