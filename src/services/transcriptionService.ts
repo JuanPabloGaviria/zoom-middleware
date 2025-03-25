@@ -7,7 +7,7 @@ import { ApiError } from '../types';
 
 const openai = new OpenAI({ apiKey: config.openai.apiKey });
 const assemblyai = new AssemblyAI({ 
-  apiKey: config.assemblyai.apiKey || '' // Fallback to empty string instead of hardcoded key
+  apiKey: config.assemblyai.apiKey || '' 
 });
 
 // Retry configuration
@@ -33,8 +33,15 @@ async function transcribeWithNano(filePath: string): Promise<string> {
   try {
     const transcript = await assemblyai.transcripts.transcribe({
       audio: filePath,
-      speech_model: 'nano'
+      speech_model: 'nano',
+      language_code: 'es', // Explicitly set Spanish
+      language_detection: true, // Still enable detection as a backup
+      language_confidence_threshold: 0.5 // Lower threshold to be more inclusive
     });
+    
+    if (transcript.status === 'error') {
+      throw new Error(`Nano transcription failed: ${transcript.error}`);
+    }
     
     logger.info('Nano model transcription completed successfully');
     
@@ -43,6 +50,7 @@ async function transcribeWithNano(filePath: string): Promise<string> {
     }
     
     logger.info(`First 100 chars of transcription: ${transcript.text.substring(0, 100)}...`);
+    logger.info(`Detected language: ${transcript.language_code}, confidence: ${transcript.language_confidence}`);
     
     return transcript.text;
   } catch (err: unknown) {
@@ -63,8 +71,14 @@ async function transcribeWithAssemblyAI(filePath: string): Promise<string> {
   try {
     const transcript = await assemblyai.transcripts.transcribe({
       audio: filePath,
-      language_detection: true
+      language_code: 'es', // Explicitly set Spanish
+      language_detection: true, // Still enable detection as a backup
+      language_confidence_threshold: 0.5 // Lower threshold to be more inclusive
     });
+    
+    if (transcript.status === 'error') {
+      throw new Error(`Standard transcription failed: ${transcript.error}`);
+    }
     
     logger.info('Standard transcription completed successfully');
     
@@ -73,6 +87,7 @@ async function transcribeWithAssemblyAI(filePath: string): Promise<string> {
     }
     
     logger.info(`First 100 chars of transcription: ${transcript.text.substring(0, 100)}...`);
+    logger.info(`Detected language: ${transcript.language_code}, confidence: ${transcript.language_confidence}`);
     
     return transcript.text;
   } catch (err: unknown) {
@@ -109,7 +124,7 @@ export const transcribeAudio = async (filePath: string): Promise<string> => {
         const transcription = await openai.audio.transcriptions.create({
           file: fs.createReadStream(filePath),
           model: "whisper-1",
-          language: "es",
+          language: "es", // Explicitly set Spanish
           response_format: "text"
         });
         
@@ -134,13 +149,13 @@ export const transcribeAudio = async (filePath: string): Promise<string> => {
   
   // Check if AssemblyAI API key is available
   if (!config.assemblyai.apiKey) {
-    logger.warn('AssemblyAI API key not configured, using fallback transcription');
-    return fallbackTranscription();
+    logger.error('AssemblyAI API key not configured, transcription cannot proceed');
+    throw new Error('AssemblyAI API key is required for transcription');
   }
   
-  // Try cost-effective Nano model next
+  // Try cost-effective Nano model with Spanish option
   try {
-    logger.info('Trying cost-effective Nano transcription');
+    logger.info('Trying cost-effective Nano transcription with Spanish language setting');
     const nanoTranscription = await transcribeWithNano(filePath);
     logger.info('Successfully transcribed with Nano model');
     return nanoTranscription;
@@ -149,26 +164,15 @@ export const transcribeAudio = async (filePath: string): Promise<string> => {
     logger.warn('Nano transcription failed, falling back to standard AssemblyAI', { message: error.message });
   }
   
-  // Try standard AssemblyAI model
+  // Try standard AssemblyAI model with Spanish option
   try {
-    logger.info('Trying standard AssemblyAI transcription');
+    logger.info('Trying standard AssemblyAI transcription with Spanish language setting');
     const standardTranscription = await transcribeWithAssemblyAI(filePath);
     logger.info('Successfully transcribed with standard AssemblyAI model');
     return standardTranscription;
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('All AssemblyAI transcription attempts failed', { message: error.message });
+    throw new Error('All transcription methods failed');
   }
-  
-  // Last resort fallback
-  logger.warn('All transcription methods failed, using fallback transcription');
-  return fallbackTranscription();
-}
-
-/**
- * Provides a fallback transcription for testing when all methods fail
- * @returns Fallback transcription text
- */
-function fallbackTranscription(): string {
-  return "Hola equipo, vamos a revisar algunos cambios para nuestros personajes. Para el Project: Prj, necesitamos actualizar al Character: Jerry con una nueva Task: Blocking para la cabeza y el cuerpo. El movimiento no es fluido y necesitamos mejorar las expresiones faciales. También para Character: Tom necesitamos revisar la Task: Animation de las patas traseras. No olvidemos actualizar la documentación en ClickUp con estos cambios.";
 }
