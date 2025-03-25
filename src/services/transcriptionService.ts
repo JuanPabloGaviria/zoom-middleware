@@ -12,7 +12,7 @@ const assemblyai = new AssemblyAI({
 
 // Retry configuration
 const MAX_RETRIES = 2;
-const RETRY_DELAY = 1000; // ms
+const RETRY_DELAY = 500; // ms
 
 /**
  * Sleep utility function
