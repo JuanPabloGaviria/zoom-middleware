@@ -7,7 +7,7 @@ const router = Router();
 // Fixed route handler
 router.post('/zoom', verifyZoomWebhook, (req, res) => {
   // The middleware will handle special cases like validation
-  handleZoomWebhook(req, res).catch(err => {
+  handleZoomWebhook(req, res).catch((err: Error) => {
     console.error('Uncaught error in webhook handler:', err);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Internal server error' });

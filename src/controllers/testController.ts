@@ -24,12 +24,24 @@ export const testGoogleDriveAudio = async (req: Request, res: Response): Promise
     const mp3FilePath = await convertToMp3(downloadedFilePath);
     filesToCleanup.push(mp3FilePath);
     
-    // Extract information using Lemur
+    // Extract information using LLM
     logger.info(`Extracting information from MP3: ${mp3FilePath}`);
     const extractedInfos = await extractInformationWithLemur(mp3FilePath);
     
+    // Handle empty results gracefully
     if (extractedInfos.length === 0) {
-      throw new Error('No character/task information extracted from audio');
+      logger.info('No character/task combinations found in audio file');
+      
+      // Return success response with empty results
+      res.status(200).json({
+        status: 'success',
+        message: 'Processing completed. No animation characters detected in audio.',
+        results: {
+          extractedInfo: [],
+          clickUpUpdates: []
+        }
+      });
+      return;
     }
     
     logger.info(`Successfully extracted ${extractedInfos.length} character/task combinations`);

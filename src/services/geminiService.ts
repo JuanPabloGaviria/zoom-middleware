@@ -50,33 +50,36 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
     
     // Completely revised prompt focused on precise identification
     const prompt = `
-      Esta es la transcripción completa de una reunión de animación en español. Necesito que analices el texto y extraigas ÚNICAMENTE los personajes animados mencionados junto con las tareas específicas que se discuten para cada uno.
+    Analiza esta transcripción en español de una conversación sobre animación.
 
-      REGLAS ESTRICTAS:
-      1. Solo incluye personajes animados que se mencionan EXPLÍCITAMENTE como personajes de animación
-      2. Excluye COMPLETAMENTE nombres que son personas reales (como José, Luis, Javier, etc.)
-      3. Para cada personaje, identifica solo las tareas específicas asignadas (como Blocking, Animation, Modeling, etc.)
-      4. Si no hay tareas específicas asignadas a un personaje, no lo incluyas
-      5. NO INVENTES personajes ni tareas que no estén claramente mencionados
-      6. Si no encuentras ningún personaje de animación, devuelve un array vacío
-      7. Tareas comunes incluyen: Modeling, Animation, Rigging, Blocking, Texturing, Lighting, Topology
+    IMPORTANTE: Busca cualquier mención de lo siguiente:
+    1. Personajes animados - incluyendo pero no limitado a: Tom, Jerry, cualquier nombre propio que parece ser un personaje
+    2. Tareas de animación asociadas con estos personajes - como Modeling, Animation, Rigging, Blocking, etc.
+    3. Si se menciona un proyecto de animación específico
 
-      FORMATO DE RESPUESTA JSON:
-      {
+    CONSIDERA:
+    - Los personajes pueden ser mencionados en cualquier contexto (ej: "necesitamos trabajar en Tom")
+    - Busca frases como "el personaje X", "debemos animar a Y", etc.
+    - También busca referencias a "modelos", "personajes", "assets" que puedan indicar personajes
+    - Las tareas pueden incluir: Modeling, Animation, Rigging, Blocking, Texturing, etc.
+    - Los nombres de personas reales (José, Luis, Javier) NO son personajes animados
+
+    FORMATO DE RESPUESTA:
+    {
         "characters": [
-          {
+        {
             "name": "NombrePersonaje",
             "tasks": ["Tarea1", "Tarea2"],
-            "context": "Descripción exacta de lo que debe hacerse"
-          }
+            "context": "Descripción exacta de la mención"
+        }
         ],
-        "project": "NombreProyecto"
-      }
+        "project": "NombreProyecto" (o "Prj" si no se especifica)
+    }
 
-      Si no estás 100% seguro de que algo es un personaje animado, NO lo incluyas.
-      
-      TRANSCRIPCIÓN COMPLETA:
-      ${text}
+    IMPORTANTE: Si no encuentras NINGÚN personaje animado claramente identificable, devuelve un array vacío de "characters".
+    
+    TRANSCRIPCIÓN COMPLETA A ANALIZAR:
+    ${text}
     `;
     
     // Generate content with very low temperature for precise extraction

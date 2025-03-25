@@ -108,7 +108,7 @@ const processRecording = async (webhookData: ZoomWebhookEvent): Promise<void> =>
     logger.info(`Processing recording for meeting: ${meeting.topic}`);
     
     // Find audio recording
-    const audioRecording = recordings.find((file) => 
+    const audioRecording = recordings.find((file: any) => 
       file.file_type === 'M4A' || 
       file.file_type === 'MP4' || 
       file.recording_type === 'audio_only'
@@ -129,9 +129,15 @@ const processRecording = async (webhookData: ZoomWebhookEvent): Promise<void> =>
     const mp3FilePath = await convertToMp3(downloadedFilePath);
     filesToCleanup.push(mp3FilePath);
     
-    // Extract information using Lemur
+    // Extract information using LLM
     logger.info(`Extracting information from MP3 file: ${mp3FilePath}`);
     const extractedInfos = await extractInformationWithLemur(mp3FilePath);
+    
+    // Handle empty results gracefully
+    if (extractedInfos.length === 0) {
+      logger.info(`No character/task combinations found in recording from meeting: ${meeting.topic}`);
+      return;
+    }
     
     logger.info(`Successfully extracted ${extractedInfos.length} character/task combinations`);
     
