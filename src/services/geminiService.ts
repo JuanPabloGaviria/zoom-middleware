@@ -79,7 +79,7 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
         temperature: 0.1,      // Lower temperature for more precise extraction
         topP: 0.95,            // Higher topP to allow for more precise outputs
         topK: 40,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 8192,
       }
     });
     
