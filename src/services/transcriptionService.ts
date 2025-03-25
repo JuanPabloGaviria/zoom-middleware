@@ -5,6 +5,7 @@ import config from '../config/env';
 import logger from '../config/logger';
 import { ApiError } from '../types';
 
+// Initialize API clients
 const openai = new OpenAI({ apiKey: config.openai.apiKey });
 const assemblyai = new AssemblyAI({ 
   apiKey: config.assemblyai.apiKey || ''
@@ -12,7 +13,7 @@ const assemblyai = new AssemblyAI({
 
 // Retry configuration
 const MAX_RETRIES = 2;
-const RETRY_DELAY = 250; // ms
+const RETRY_DELAY = 75; // ms
 
 /**
  * Sleep utility function
@@ -23,78 +24,7 @@ export const sleep = async (ms: number): Promise<void> => {
 };
 
 /**
- * Low-cost transcription using Nano model from AssemblyAI with language detection
- * @param filePath - Path to audio file
- * @returns Transcription text
- */
-async function transcribeWithNanoDetection(filePath: string): Promise<string> {
-  logger.info('Starting transcription with AssemblyAI Nano model using language detection');
-  
-  try {
-    const transcript = await assemblyai.transcripts.transcribe({
-      audio: filePath,
-      speech_model: 'nano',
-      language_detection: true
-    });
-    
-    if (transcript.status === 'error') {
-      throw new Error(`Nano transcription with language detection failed: ${transcript.error}`);
-    }
-    
-    logger.info('Nano model transcription with language detection completed successfully');
-    
-    if (!transcript.text) {
-      throw new Error('No text returned from Nano transcription');
-    }
-    
-    logger.info(`First 100 chars of transcription: ${transcript.text.substring(0, 100)}...`);
-    logger.info(`Detected language: ${transcript.language_code || 'not specified'}, confidence: ${transcript.language_confidence || 'not specified'}`);
-    
-    return transcript.text;
-  } catch (err: unknown) {
-    const error = err as ApiError;
-    logger.error('Error with Nano transcription using language detection', { message: error.message });
-    throw error;
-  }
-}
-
-/**
- * Low-cost transcription using Nano model from AssemblyAI with Spanish specified
- * @param filePath - Path to audio file
- * @returns Transcription text
- */
-async function transcribeWithNanoSpanish(filePath: string): Promise<string> {
-  logger.info('Starting transcription with AssemblyAI Nano model with explicit Spanish setting');
-  
-  try {
-    const transcript = await assemblyai.transcripts.transcribe({
-      audio: filePath,
-      speech_model: 'nano',
-      language_code: 'es'
-    });
-    
-    if (transcript.status === 'error') {
-      throw new Error(`Nano transcription with Spanish setting failed: ${transcript.error}`);
-    }
-    
-    logger.info('Nano model transcription with Spanish setting completed successfully');
-    
-    if (!transcript.text) {
-      throw new Error('No text returned from Nano transcription');
-    }
-    
-    logger.info(`First 100 chars of transcription: ${transcript.text.substring(0, 100)}...`);
-    
-    return transcript.text;
-  } catch (err: unknown) {
-    const error = err as ApiError;
-    logger.error('Error with Nano transcription using Spanish setting', { message: error.message });
-    throw error;
-  }
-}
-
-/**
- * Standard transcription using AssemblyAI with language detection
+ * Transcribe audio using AssemblyAI's standard model with language detection
  * @param filePath - Path to audio file
  * @returns Transcription text
  */
@@ -104,7 +34,10 @@ async function transcribeWithStandardDetection(filePath: string): Promise<string
   try {
     const transcript = await assemblyai.transcripts.transcribe({
       audio: filePath,
-      language_detection: true
+      language_detection: true,
+      speaker_labels: true, // Enable speaker diarization
+      punctuate: true,      // Ensure proper punctuation
+      format_text: true     // Format the text for readability
     });
     
     if (transcript.status === 'error') {
@@ -117,6 +50,7 @@ async function transcribeWithStandardDetection(filePath: string): Promise<string
       throw new Error('No text returned from standard transcription');
     }
     
+    logger.info(`Transcription length: ${transcript.text.length} characters`);
     logger.info(`First 100 chars of transcription: ${transcript.text.substring(0, 100)}...`);
     logger.info(`Detected language: ${transcript.language_code || 'not specified'}, confidence: ${transcript.language_confidence || 'not specified'}`);
     
@@ -129,7 +63,7 @@ async function transcribeWithStandardDetection(filePath: string): Promise<string
 }
 
 /**
- * Standard transcription using AssemblyAI with Spanish specified
+ * Transcribe audio using AssemblyAI's standard model with explicit Spanish setting
  * @param filePath - Path to audio file
  * @returns Transcription text
  */
@@ -139,7 +73,10 @@ async function transcribeWithStandardSpanish(filePath: string): Promise<string> 
   try {
     const transcript = await assemblyai.transcripts.transcribe({
       audio: filePath,
-      language_code: 'es'
+      language_code: 'es',
+      speaker_labels: true, // Enable speaker diarization
+      punctuate: true,      // Ensure proper punctuation
+      format_text: true     // Format the text for readability
     });
     
     if (transcript.status === 'error') {
@@ -152,6 +89,7 @@ async function transcribeWithStandardSpanish(filePath: string): Promise<string> 
       throw new Error('No text returned from standard transcription');
     }
     
+    logger.info(`Transcription length: ${transcript.text.length} characters`);
     logger.info(`First 100 chars of transcription: ${transcript.text.substring(0, 100)}...`);
     
     return transcript.text;
@@ -214,33 +152,11 @@ export const transcribeAudio = async (filePath: string): Promise<string> => {
   
   // Check if AssemblyAI API key is available
   if (!config.assemblyai.apiKey) {
-    logger.error('AssemblyAI API key not configured, using fallback transcription');
-    return fallbackTranscription();
+    logger.error('AssemblyAI API key not configured, transcription cannot proceed');
+    throw new Error('AssemblyAI API key is required for transcription');
   }
   
-  // Strategy 1: Try with language detection first (Nano model)
-  try {
-    logger.info('Trying transcription with Nano model and language detection');
-    const nanoDetectionTranscription = await transcribeWithNanoDetection(filePath);
-    logger.info('Successfully transcribed with Nano model and language detection');
-    return nanoDetectionTranscription;
-  } catch (err: unknown) {
-    const error = err as ApiError;
-    logger.warn('Nano transcription with language detection failed, trying next approach', { message: error.message });
-  }
-  
-  // Strategy 2: Try forcing Spanish with Nano model
-  try {
-    logger.info('Trying transcription with Nano model and explicit Spanish setting');
-    const nanoSpanishTranscription = await transcribeWithNanoSpanish(filePath);
-    logger.info('Successfully transcribed with Nano model and Spanish setting');
-    return nanoSpanishTranscription;
-  } catch (err: unknown) {
-    const error = err as ApiError;
-    logger.warn('Nano transcription with Spanish setting failed, trying next approach', { message: error.message });
-  }
-  
-  // Strategy 3: Try with language detection (Standard model)
+  // Strategy 1: Try with language detection first (Standard model)
   try {
     logger.info('Trying transcription with standard model and language detection');
     const standardDetectionTranscription = await transcribeWithStandardDetection(filePath);
@@ -248,10 +164,10 @@ export const transcribeAudio = async (filePath: string): Promise<string> => {
     return standardDetectionTranscription;
   } catch (err: unknown) {
     const error = err as ApiError;
-    logger.warn('Standard transcription with language detection failed, trying next approach', { message: error.message });
+    logger.warn('Standard transcription with language detection failed, trying explicit Spanish', { message: error.message });
   }
   
-  // Strategy 4: Try forcing Spanish with Standard model
+  // Strategy 2: Try forcing Spanish with Standard model
   try {
     logger.info('Trying transcription with standard model and explicit Spanish setting');
     const standardSpanishTranscription = await transcribeWithStandardSpanish(filePath);
@@ -260,17 +176,6 @@ export const transcribeAudio = async (filePath: string): Promise<string> => {
   } catch (err: unknown) {
     const error = err as ApiError;
     logger.error('All AssemblyAI transcription attempts failed', { message: error.message });
+    throw new Error('All transcription methods failed');
   }
-  
-  // All attempts failed, use fallback
-  logger.error('Transcription failed, using fallback text');
-  return fallbackTranscription();
-}
-
-/**
- * Provides a fallback transcription for testing when all methods fail
- * @returns Fallback transcription text
- */
-function fallbackTranscription(): string {
-  return "Hola equipo, vamos a revisar algunos cambios para nuestros personajes. Para el Project: Prj, necesitamos actualizar al Character: Jerry con una nueva Task: Blocking para la cabeza y el cuerpo. El movimiento no es fluido y necesitamos mejorar las expresiones faciales. También para Character: Tom necesitamos revisar la Task: Animation de las patas traseras. No olvidemos actualizar la documentación en ClickUp con estos cambios.";
 }
