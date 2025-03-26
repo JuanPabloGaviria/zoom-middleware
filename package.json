@@ -13,7 +13,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "prepare-render": "npm run build && cp package.json dist/"
+    "prepare-render": "npm run build && cp package.json dist/",
+    "test:ws": "npx ts-node src/test-ws.ts"
   },
   "keywords": [
     "zoom",
