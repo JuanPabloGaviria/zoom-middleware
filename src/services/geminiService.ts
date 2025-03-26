@@ -156,7 +156,7 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
     }
     
     // Post-process to validate characters are actually in the transcript
-    const validatedCharacters = [];
+    const validatedCharacters: any[] = [];
     for (const character of parsedData.characters) {
       if (text.toLowerCase().includes(character.name.toLowerCase())) {
         validatedCharacters.push(character);
