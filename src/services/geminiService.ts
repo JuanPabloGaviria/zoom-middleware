@@ -9,6 +9,47 @@ import path from 'path';
 const genAI = new GoogleGenerativeAI(config.gemini.apiKey);
 
 /**
+ * Clean and fix JSON string to make it parseable
+ * @param str - Potentially malformed JSON string
+ * @returns Cleaned JSON string
+ */
+function cleanJsonString(str: string): string {
+  // Remove markdown code blocks
+  let cleaned = str.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+  
+  // Find the first { and last }
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  
+  if (firstBrace !== -1 && lastBrace !== -1) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  }
+  
+  // Fix common JSON errors
+  cleaned = cleaned
+    .replace(/,\s*}/g, '}')              // Remove trailing commas in objects
+    .replace(/,\s*\]/g, ']')             // Remove trailing commas in arrays
+    .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":')  // Ensure property names are quoted
+    .replace(/:\s*'/g, ': "')            // Replace single quotes with double quotes for values
+    .replace(/'\s*,/g, '",')             // Replace single quotes with double quotes for values
+    .replace(/'\s*}/g, '"}')             // Replace single quotes with double quotes for values
+    .replace(/'\s*]/g, '"]')             // Replace single quotes with double quotes for values
+    .replace(/\\'/g, "'")                // Fix escaped single quotes
+    .replace(/\\"/g, '"')                // Fix escaped double quotes
+    .replace(/\\/g, '\\\\')              // Escape backslashes
+    .replace(/\n/g, '')                  // Remove newlines
+    .replace(/\r/g, '')                  // Remove carriage returns
+    .replace(/\t/g, '')                  // Remove tabs
+    .replace(/\s+/g, ' ')                // Normalize whitespace
+    .trim();
+
+  // Try to fix unquoted property values
+  cleaned = cleaned.replace(/"([\w]+)":\s*([\w]+)/g, '"$1": "$2"');
+  
+  return cleaned;
+}
+
+/**
  * Extract character, project and task information from transcribed text using Gemini
  * @param text - The transcribed text to analyze
  * @returns Array of extracted information
@@ -48,41 +89,36 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
       ]
     });
     
-    // Completely revised prompt focused on precise identification
+    // Optimized prompt focused on JSON formatting and specific to the task
     const prompt = `
-    Analiza esta transcripción en español de una conversación sobre animación.
+    Analyze this transcription of a conversation about animated characters.
 
-    IMPORTANTE: Busca cualquier mención de lo siguiente:
-    1. Personajes animados - incluyendo pero no limitado a: Tom, Jerry, cualquier nombre propio que parece ser un personaje
-    2. Tareas de animación asociadas con estos personajes - como Modeling, Animation, Rigging, Blocking, etc.
-    3. Si se menciona un proyecto de animación específico
-
-    CONSIDERA:
-    - Los personajes pueden ser mencionados en cualquier contexto (ej: "necesitamos trabajar en Tom")
-    - Busca frases como "el personaje X", "debemos animar a Y", etc.
-    - También busca referencias a "modelos", "personajes", "assets" que puedan indicar personajes
-    - Las tareas pueden incluir: Modeling, Animation, Rigging, Blocking, Texturing, etc.
-    - Los nombres de personas reales (José, Luis, Javier) NO son personajes animados
-
-    FORMATO DE RESPUESTA:
-    {
-        "characters": [
-        {
-            "name": "NombrePersonaje",
-            "tasks": ["Tarea1", "Tarea2"],
-            "context": "Descripción exacta de la mención"
-        }
-        ],
-        "project": "NombreProyecto" (o "Prj" si no se especifica)
-    }
-
-    IMPORTANTE: Si no encuentras NINGÚN personaje animado claramente identificable, devuelve un array vacío de "characters".
+    You must identify three elements:
+    1. Project name (default to "Prj" if not mentioned)
+    2. Character names (e.g., Tom, Jerry, Mickey) - only animated characters, not real people
+    3. Tasks associated with each character (e.g., Blocking, Animation, Rigging)
     
-    TRANSCRIPCIÓN COMPLETA A ANALIZAR:
+    YOUR RESPONSE MUST BE VALID JSON in this format:
+    {
+      "characters": [
+        {
+          "name": "CharacterName",
+          "tasks": ["Task1", "Task2"],
+          "context": "Brief description of what needs to be done"
+        }
+      ],
+      "project": "ProjectName"
+    }
+    
+    If you find no characters, return: {"characters": [], "project": "Prj"}
+    
+    Return only the JSON with no additional text or explanations.
+
+    TRANSCRIPTION:
     ${text}
     `;
     
-    // Generate content with very low temperature for precise extraction
+    // Generate content with low temperature for precise extraction
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
@@ -97,56 +133,59 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
     const responseText = response.text();
     
     logger.info('Gemini analysis completed');
-    logger.info(`Raw Gemini response: ${responseText}`);
     
-    // Parse JSON with robust error handling
-    let parsedData;
+    // Save raw response for debugging
+    try {
+      const debugDir = path.join(__dirname, '../../debug');
+      if (!fs.existsSync(debugDir)) {
+        fs.mkdirSync(debugDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(debugDir, `gemini_response_${Date.now()}.txt`), responseText);
+    } catch (err) {
+      logger.warn('Could not write debug Gemini response file', { error: (err as Error).message });
+    }
+    
+    // Parse the JSON response
+    let parsedData: any;
     
     try {
-      // First try direct JSON parsing
+      // First attempt: Direct JSON parsing
       parsedData = JSON.parse(responseText.trim());
+      logger.info('Successfully parsed JSON directly');
     } catch (e) {
       logger.warn('Direct JSON parsing failed, trying to extract JSON from response');
       
-      // Extract JSON with regex patterns
-      const jsonMatch = responseText.match(/```json\s*\n([\s\S]*?)\n\s*```/) || 
-                        responseText.match(/```\s*\n([\s\S]*?)\n\s*```/) || 
+      // Second attempt: Extract JSON object using regex
+      const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) || 
+                        responseText.match(/```\s*([\s\S]*?)\s*```/) || 
                         responseText.match(/{[\s\S]*"characters"[\s\S]*}/);
       
       if (jsonMatch) {
         try {
           const jsonText = jsonMatch[1] || jsonMatch[0];
-          parsedData = JSON.parse(jsonText);
+          parsedData = JSON.parse(jsonText.trim());
+          logger.info('Successfully parsed extracted JSON');
         } catch (e2) {
           logger.error('Failed to parse extracted JSON, trying cleanup');
           
-          // Enhanced cleanup for common JSON issues
-          const cleanedJson = (jsonMatch[1] || jsonMatch[0])
-            .replace(/,\s*}/g, '}')
-            .replace(/,\s*\]/g, ']')
-            .replace(/\\'/g, "'")
-            .replace(/\\"/g, '"')
-            .replace(/\n/g, ' ')
-            .replace(/\r/g, ' ')
-            .replace(/\t/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
+          // Third attempt: Clean and fix JSON
+          const cleanedJson = cleanJsonString(jsonMatch[1] || jsonMatch[0]);
           
           try {
             parsedData = JSON.parse(cleanedJson);
+            logger.info('Successfully parsed cleaned JSON');
           } catch (e3) {
             logger.error('All JSON parsing attempts failed');
             throw new Error('Unable to extract valid JSON from Gemini response after multiple attempts');
           }
         }
       } else {
-        // If no JSON structure found, create a default empty structure
-        logger.warn('No JSON structure found, returning empty results');
-        parsedData = { characters: [], project: "Prj" };
+        logger.error('No JSON structure found in response');
+        throw new Error('No JSON structure found in Gemini response');
       }
     }
     
-    // Validate the structure
+    // Validate and normalize the structure
     if (!parsedData.characters) {
       parsedData.characters = [];
     }
@@ -179,6 +218,8 @@ export const extractInformationWithGemini = async (text: string): Promise<Extrac
       }
       
       for (const task of character.tasks) {
+        if (!task) continue; // Skip empty tasks
+        
         results.push({
           project: project,
           character: character.name,

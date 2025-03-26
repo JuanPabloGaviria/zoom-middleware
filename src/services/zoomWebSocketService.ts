@@ -1,14 +1,16 @@
-import { WebSocket } from 'ws';
+import WebSocket = require('ws');
 import axios from 'axios';
 import config from '../config/env';
 import logger from '../config/logger';
 import { processZoomEvent } from '../controllers/zoomEventController';
+import { getAccessToken } from './zoomAuthService';
+
+// WebSocket readyState constants
+const WS_OPEN = 1;
 
 class ZoomWebSocketService {
   private ws: WebSocket | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private accessToken: string | null = null;
-  private tokenExpiry: number = 0;
   private isConnecting: boolean = false;
   private pingInterval: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
@@ -27,23 +29,22 @@ class ZoomWebSocketService {
 
       this.isConnecting = true;
       
-      // Ensure we have a valid access token
-      await this.getAccessToken();
-      if (!this.accessToken) {
-        throw new Error('Failed to obtain Zoom access token');
-      }
-
-      // Construct WebSocket URL with query parameters including the token
-      const wsUrl = `${config.zoom.wsUrl}?subscriptionId=${config.zoom.subscriptionId}&access_token=${this.accessToken}`;
+      // Get access token from the auth service
+      const accessToken = await getAccessToken();
       
-      logger.info(`Connecting to Zoom WebSocket at ${wsUrl.substring(0, wsUrl.indexOf('access_token')) + 'access_token=***'}`);
+      // Construct WebSocket URL with query parameters including the token
+      const wsUrl = `${config.zoom.wsUrl}?subscriptionId=${config.zoom.subscriptionId}&access_token=${accessToken}`;
+      
+      // Log URL without exposing token
+      const safeUrl = wsUrl.replace(/access_token=([^&]+)/, 'access_token=***');
+      logger.info(`Connecting to Zoom WebSocket at ${safeUrl}`);
       
       // Close existing connection if any
       if (this.ws) {
         this.cleanup();
       }
       
-      // Create new WebSocket connection - no need to include token in headers since it's in URL
+      // Create new WebSocket connection
       this.ws = new WebSocket(wsUrl);
       
       // Set up event handlers
@@ -64,23 +65,29 @@ class ZoomWebSocketService {
   private setupEventHandlers(): void {
     if (!this.ws) return;
 
-    this.ws.addEventListener('open', () => {
+    // Handle connection open
+    this.ws.on('open', () => {
       logger.info('Connected to Zoom WebSocket');
       
       // Set up ping interval to keep connection alive
       this.pingInterval = setInterval(() => {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-          this.ws.ping();
-          logger.debug('Sent ping to Zoom WebSocket');
+        if (this.ws && this.ws.readyState === WS_OPEN) {
+          try {
+            this.ws.ping();
+            logger.debug('Sent ping to Zoom WebSocket');
+          } catch (err) {
+            logger.error('Error sending ping', { error: err });
+          }
         }
       }, 30000); // Every 30 seconds
     });
 
-    this.ws.addEventListener('message', async (event) => {
+    // Handle messages
+    this.ws.on('message', (data: WebSocket.Data) => {
       try {
         logger.info('Received message from Zoom WebSocket');
         
-        const message = event.data.toString();
+        const message = data.toString();
         logger.debug('WebSocket message data', { message: message.substring(0, 200) + '...' });
         
         // Parse the message
@@ -89,20 +96,14 @@ class ZoomWebSocketService {
         // Check for connection errors
         if (eventData.module === 'build_connection' && eventData.success === false) {
           logger.error(`WebSocket connection error: ${eventData.content || 'Unknown error'}`, { eventData });
-          
-          // If there's a token issue, force token refresh
-          if (eventData.content && eventData.content.includes('token')) {
-            this.accessToken = null; // Force token refresh on next attempt
-            this.tokenExpiry = 0;
-            logger.info('Token issue detected, will refresh token on next connection attempt');
-          }
-          
           return;
         }
         
         // Process non-error events
         if (eventData.event_type || eventData.event) {
-          await processZoomEvent(eventData);
+          processZoomEvent(eventData).catch(error => {
+            logger.error('Error processing Zoom event', { error });
+          });
         } else {
           logger.debug('Received non-event message', { eventData });
         }
@@ -111,20 +112,22 @@ class ZoomWebSocketService {
       }
     });
 
-    this.ws.addEventListener('error', (event) => {
-      logger.error('Zoom WebSocket error', { error: event });
+    // Handle errors
+    this.ws.on('error', (error: Error) => {
+      logger.error('Zoom WebSocket error', { message: error.message });
     });
 
-    this.ws.addEventListener('close', (event) => {
+    // Handle connection close
+    this.ws.on('close', (code: number, reason: string) => {
       logger.warn('Zoom WebSocket connection closed', { 
-        code: event.code, 
-        reason: event.reason || 'No reason provided'
+        code, 
+        reason: reason || 'No reason provided'
       });
       this.cleanup();
       this.scheduleReconnect();
     });
 
-    // Use a custom event handler for pong event since addEventListener doesn't support it
+    // Handle pong response
     this.ws.on('pong', () => {
       logger.debug('Received pong from Zoom WebSocket');
     });
@@ -141,8 +144,12 @@ class ZoomWebSocketService {
     
     if (this.ws) {
       // Close the connection if it's still open
-      if (this.ws.readyState === WebSocket.OPEN) {
-        this.ws.close();
+      if (this.ws.readyState === WS_OPEN) {
+        try {
+          this.ws.close();
+        } catch (error) {
+          logger.error('Error closing WebSocket', { error });
+        }
       }
       this.ws = null;
     }
@@ -180,64 +187,10 @@ class ZoomWebSocketService {
   }
 
   /**
-   * Get a Zoom access token using client credentials flow
-   */
-  private async getAccessToken(): Promise<void> {
-    try {
-      // Check if we already have a valid token
-      const currentTime = Math.floor(Date.now() / 1000);
-      if (this.accessToken && this.tokenExpiry > currentTime + 60) {
-        logger.debug('Using existing Zoom access token');
-        return;
-      }
-
-      logger.info('Obtaining new Zoom access token');
-      
-      // Create basic auth string from client ID and secret
-      const credentials = Buffer.from(
-        `${config.zoom.clientId}:${config.zoom.clientSecret}`
-      ).toString('base64');
-      
-      // Request new token
-      const response = await axios.post(
-        config.zoom.oauth.tokenUrl,
-        'grant_type=account_credentials&account_id=' + config.zoom.accountId,
-        {
-          headers: {
-            'Authorization': `Basic ${credentials}`,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        }
-      );
-      
-      // Update token and expiry
-      this.accessToken = response.data.access_token;
-      // Calculate expiry time by adding expiry seconds to current time
-      this.tokenExpiry = Math.floor(Date.now() / 1000) + response.data.expires_in;
-      
-      logger.info('Successfully obtained Zoom access token', {
-        expiresIn: response.data.expires_in,
-        tokenType: response.data.token_type
-      });
-    } catch (error) {
-      const err = error as Error & { response?: { status?: number, statusText?: string, data?: any } };
-      
-      logger.error('Failed to obtain Zoom access token', {
-        message: err.message,
-        status: err.response?.status,
-        statusText: err.response?.statusText,
-        data: err.response?.data
-      });
-      this.accessToken = null;
-      throw err;
-    }
-  }
-
-  /**
    * Get current connection status
    */
   isConnected(): boolean {
-    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    return this.ws !== null && this.ws.readyState === WS_OPEN;
   }
 
   /**

@@ -2,6 +2,7 @@ import logger from '../config/logger';
 import { ExtractedInfo, ApiError } from '../types';
 import { extractInformationWithGemini } from './geminiService';
 import { transcribeAudio } from './transcriptionService';
+import { getZoomTranscription } from './zoomTranscriptionService';
 
 /**
  * Extracts character, project and task information from audio file
@@ -19,12 +20,7 @@ export const extractInformationWithLemur = async (filePath: string): Promise<Ext
     // Then extract information using Gemini with the full text
     const results = await extractInformationWithGemini(transcriptionText);
     
-    // If no results, return empty array but don't throw error
-    if (results.length === 0) {
-      logger.warn('No character/task combinations extracted from audio');
-      return [];
-    }
-    
+    // Return whatever Gemini found (could be empty array)
     return results;
   } catch (err: unknown) {
     const error = err as ApiError;
@@ -34,28 +30,32 @@ export const extractInformationWithLemur = async (filePath: string): Promise<Ext
 };
 
 /**
- * Extracts character, project and task information from transcribed text
- * @param text - The transcribed text to analyze
+ * Extracts information using Zoom transcription if available
+ * @param filePath - Path to the audio file 
+ * @param zoomRecordingId - Zoom recording ID
+ * @param accessToken - Zoom access token
  * @returns Array of extracted information
  */
-export const extractInformation = async (text: string): Promise<ExtractedInfo[]> => {
-  return extractInformationWithGemini(text);
-};
-
-/**
- * Find a sentence containing a specific character mention
- * @param text - Full text to search
- * @param character - Character name to find
- * @returns The sentence containing the character, or null if not found
- */
-function findSentence(text: string, character: string): string | null {
-  const sentences = text.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 0);
-  
-  for (const sentence of sentences) {
-    if (sentence.toLowerCase().includes(character.toLowerCase())) {
-      return sentence;
-    }
+export const extractInformationWithZoom = async (
+  filePath: string,
+  zoomRecordingId: string,
+  accessToken: string
+): Promise<ExtractedInfo[]> => {
+  try {
+    logger.info(`Attempting to use Zoom transcription for recording ${zoomRecordingId}`);
+    
+    // Try to get transcription from Zoom API
+    const transcriptionText = await getZoomTranscription(zoomRecordingId, accessToken);
+    logger.info('Successfully retrieved Zoom transcription');
+    
+    // Use Gemini to extract information from the Zoom transcription
+    return await extractInformationWithGemini(transcriptionText);
+  } catch (err: unknown) {
+    const error = err as ApiError;
+    logger.error('Error with Zoom transcription extraction', { message: error.message });
+    
+    // If Zoom transcription fails, fall back to our own transcription
+    logger.info('Falling back to standard transcription');
+    return await extractInformationWithLemur(filePath);
   }
-  
-  return null;
-}
+};
