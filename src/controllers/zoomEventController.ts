@@ -1,25 +1,28 @@
+import axios from 'axios';
 import logger from '../config/logger';
 import { downloadFile, convertToMp3, cleanupFiles } from '../services/audioService';
-import { extractInformationWithLemur } from '../services/extractionService';
+import { extractInformationWithLemur, extractInformationWithZoom } from '../services/extractionService';
 import { updateClickUpTask } from '../services/clickupService';
 import { ApiError, ExtractedInfo, ZoomMeeting, ZoomRecordingFile } from '../types';
+import { getAccessToken } from '../services/zoomAuthService';
+import { enableZoomTranscription } from '../services/zoomTranscriptionService';
 
 /**
  * Process Zoom events received via WebSocket
  * @param event - The event data from Zoom WebSocket
  */
-/**
- * Process events received from Zoom WebSocket
- * @param event The event data from Zoom
- */
 export const processZoomEvent = async (event: any): Promise<void> => {
   try {
     // Log the event type
-    logger.info(`Processing Zoom event: ${event.event_type || event.event}`);
+    const eventType = event.event_type || event.event;
+    logger.info(`Processing Zoom event: ${eventType}`, { 
+      eventId: event.payload?.object?.id || 'unknown'
+    });
+    
+    // Send to n8n webhook if configured
+    await forwardEventToN8n(event);
     
     // Handle different event types
-    const eventType = event.event_type || event.event;
-    
     switch (eventType) {
       case 'recording.completed':
         await handleRecordingCompleted(event);
@@ -42,6 +45,27 @@ export const processZoomEvent = async (event: any): Promise<void> => {
     });
   }
 };
+
+/**
+ * Forward event to n8n webhook if configured
+ * @param event - The event data to forward
+ */
+async function forwardEventToN8n(event: any): Promise<void> {
+  const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
+  
+  if (n8nWebhookUrl) {
+    try {
+      logger.info('Forwarding event to n8n webhook');
+      await axios.post(n8nWebhookUrl, event);
+      logger.info('Successfully forwarded event to n8n');
+    } catch (error) {
+      logger.error('Failed to forward event to n8n', { 
+        error: (error as Error).message,
+        webhookUrl: n8nWebhookUrl 
+      });
+    }
+  }
+}
 
 /**
  * Process extracted info with rate limiting to avoid API throttling
@@ -135,6 +159,19 @@ const handleRecordingCompleted = async (event: any): Promise<void> => {
       throw new Error('No audio recording found');
     }
     
+    // Get Zoom access token for API calls
+    const accessToken = await getAccessToken();
+    
+    // Request transcription from Zoom (may take time to process)
+    try {
+      await enableZoomTranscription(meeting.id, audioRecording.id, accessToken);
+      logger.info('Requested Zoom transcription for the recording');
+    } catch (transcriptionErr) {
+      logger.warn('Failed to request Zoom transcription, will use local processing', {
+        error: (transcriptionErr as Error).message
+      });
+    }
+    
     // Download file
     const downloadToken = meeting.download_token;
     logger.info(`Downloading recording from URL: ${audioRecording.download_url}`);
@@ -146,13 +183,28 @@ const handleRecordingCompleted = async (event: any): Promise<void> => {
     const mp3FilePath = await convertToMp3(downloadedFilePath);
     filesToCleanup.push(mp3FilePath);
     
-    // Extract information using LLM
-    logger.info(`Extracting information from MP3 file: ${mp3FilePath}`);
-    const extractedInfos = await extractInformationWithLemur(mp3FilePath);
+    // Extract information using Zoom transcription if possible, or our own otherwise
+    logger.info(`Extracting information from recording`);
+    let extractedInfos: ExtractedInfo[] = [];
     
-    // Handle empty results gracefully
+    try {
+      // Try to use Zoom's transcription first
+      extractedInfos = await extractInformationWithZoom(
+        mp3FilePath,
+        audioRecording.id,
+        accessToken
+      );
+    } catch (error) {
+      // If that fails, use our own transcription and extraction
+      logger.warn('Zoom transcription extraction failed, using local extraction', {
+        error: (error as Error).message
+      });
+      extractedInfos = await extractInformationWithLemur(mp3FilePath);
+    }
+    
+    // If no information was extracted, log a warning and exit
     if (extractedInfos.length === 0) {
-      logger.info(`No character/task combinations found in recording from meeting: ${meeting.topic}`);
+      logger.warn(`No character/task combinations found in recording from meeting: ${meeting.topic}`);
       return;
     }
     

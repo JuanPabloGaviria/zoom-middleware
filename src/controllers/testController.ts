@@ -32,15 +32,31 @@ export const testGoogleDriveAudio = async (req: Request, res: Response): Promise
     const mp3FilePath = await convertToMp3(downloadedFilePath);
     filesToCleanup.push(mp3FilePath);
     
-    // Extract information using LLM
+    // Extract information using the extraction service
     logger.info(`Extracting information from MP3: ${mp3FilePath}`);
-    const extractedInfos = await extractInformationWithLemur(mp3FilePath);
+    let extractedInfos: ExtractedInfo[] = [];
+    
+    try {
+      extractedInfos = await extractInformationWithLemur(mp3FilePath);
+    } catch (extractErr) {
+      logger.error('Failed to extract information from audio', { 
+        error: (extractErr as Error).message 
+      });
+      
+      // Return error response
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to extract character information from audio',
+        error: (extractErr as Error).message
+      });
+      return;
+    }
     
     // Handle empty results gracefully
     if (extractedInfos.length === 0) {
       logger.info('No character/task combinations found in audio file');
       
-      // Return success response with empty results
+      // Return empty results
       res.status(200).json({
         status: 'success',
         message: 'Processing completed. No animation characters detected in audio.',

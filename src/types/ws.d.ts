@@ -1,8 +1,11 @@
-// Type definitions for 'ws' module
-// This is a custom declaration file to augment the ws module
-
+// Type definitions for 'ws' WebSocket
 declare module 'ws' {
-    export class WebSocket {
+    // Define Data type for message events
+    namespace WebSocket {
+      type Data = string | Buffer | ArrayBuffer | Buffer[];
+    }
+  
+    class WebSocket {
       static readonly CONNECTING: number;
       static readonly OPEN: number;
       static readonly CLOSING: number;
@@ -10,17 +13,21 @@ declare module 'ws' {
       
       readyState: number;
       
-      constructor(address: string, options?: { headers?: Record<string, string> });
+      constructor(address: string, options?: any);
       
-      addEventListener(event: 'open', listener: () => void): void;
-      addEventListener(event: 'message', listener: (data: any) => void): void;
-      addEventListener(event: 'error', listener: (error: any) => void): void;
-      addEventListener(event: 'close', listener: (event: { code: number, reason: string }) => void): void;
+      on(event: 'open', cb: () => void): this;
+      on(event: 'message', cb: (data: WebSocket.Data) => void): this;
+      on(event: 'error', cb: (error: Error) => void): this;
+      on(event: 'close', cb: (code: number, reason: string) => void): this;
+      on(event: 'pong', cb: () => void): this;
+      on(event: string, cb: (...args: any[]) => void): this;
       
-      on(event: 'pong', listener: () => void): this;
-      on(event: string, listener: (...args: any[]) => void): this;
-      
-      ping(data?: any, mask?: boolean, cb?: (err: Error) => void): void;
+      send(data: any, cb?: (err?: Error) => void): void;
+      ping(data?: any, mask?: boolean, cb?: (err?: Error) => void): void;
       close(code?: number, reason?: string): void;
+      
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject): void;
     }
+    
+    export = WebSocket;
   }

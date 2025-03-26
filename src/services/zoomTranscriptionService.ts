@@ -1,6 +1,5 @@
 import axios from 'axios';
 import logger from '../config/logger';
-import config from '../config/env';
 import { ApiError } from '../types';
 
 /**
