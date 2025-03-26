@@ -33,22 +33,18 @@ class ZoomWebSocketService {
         throw new Error('Failed to obtain Zoom access token');
       }
 
-      // Construct WebSocket URL with query parameters
-      const wsUrl = `${config.zoom.wsUrl}?subscriptionId=${config.zoom.subscriptionId}`;
+      // Construct WebSocket URL with query parameters including the token
+      const wsUrl = `${config.zoom.wsUrl}?subscriptionId=${config.zoom.subscriptionId}&access_token=${this.accessToken}`;
       
-      logger.info(`Connecting to Zoom WebSocket at ${wsUrl}`);
+      logger.info(`Connecting to Zoom WebSocket at ${wsUrl.substring(0, wsUrl.indexOf('access_token')) + 'access_token=***'}`);
       
       // Close existing connection if any
       if (this.ws) {
         this.cleanup();
       }
       
-      // Create new WebSocket connection
-      this.ws = new WebSocket(wsUrl, {
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`
-        }
-      });
+      // Create new WebSocket connection - no need to include token in headers since it's in URL
+      this.ws = new WebSocket(wsUrl);
       
       // Set up event handlers
       this.setupEventHandlers();
@@ -90,8 +86,26 @@ class ZoomWebSocketService {
         // Parse the message
         const eventData = JSON.parse(message);
         
-        // Process the event
-        await processZoomEvent(eventData);
+        // Check for connection errors
+        if (eventData.module === 'build_connection' && eventData.success === false) {
+          logger.error(`WebSocket connection error: ${eventData.content || 'Unknown error'}`, { eventData });
+          
+          // If there's a token issue, force token refresh
+          if (eventData.content && eventData.content.includes('token')) {
+            this.accessToken = null; // Force token refresh on next attempt
+            this.tokenExpiry = 0;
+            logger.info('Token issue detected, will refresh token on next connection attempt');
+          }
+          
+          return;
+        }
+        
+        // Process non-error events
+        if (eventData.event_type || eventData.event) {
+          await processZoomEvent(eventData);
+        } else {
+          logger.debug('Received non-event message', { eventData });
+        }
       } catch (error) {
         logger.error('Error processing WebSocket message', { error });
       }
