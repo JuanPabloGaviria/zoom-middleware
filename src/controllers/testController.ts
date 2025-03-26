@@ -3,7 +3,15 @@ import logger from '../config/logger';
 import { downloadFile, convertToMp3, cleanupFiles } from '../services/audioService';
 import { extractInformationWithLemur } from '../services/extractionService';
 import { updateClickUpTask } from '../services/clickupService';
-import { ApiError } from '../types';
+import { ApiError, ExtractedInfo } from '../types';
+
+// Define an interface for update results
+interface UpdateResult {
+  character: string;
+  task: string;
+  status: string;
+  error?: string;
+}
 
 export const testGoogleDriveAudio = async (req: Request, res: Response): Promise<void> => {
   const filesToCleanup: string[] = [];
@@ -47,7 +55,7 @@ export const testGoogleDriveAudio = async (req: Request, res: Response): Promise
     logger.info(`Successfully extracted ${extractedInfos.length} character/task combinations`);
     
     // Update ClickUp for each extracted info
-    const updateResults = [];
+    const updateResults: UpdateResult[] = [];
     for (const info of extractedInfos) {
       try {
         logger.info(`Updating ClickUp for character: ${info.character}, task: ${info.task}`);
