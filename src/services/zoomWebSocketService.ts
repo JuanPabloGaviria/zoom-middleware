@@ -2,11 +2,13 @@ import WebSocket = require('ws');
 import axios from 'axios';
 import config from '../config/env';
 import logger from '../config/logger';
-import { processZoomEvent } from '../controllers/zoomEventController';
 import { getAccessToken } from './zoomAuthService';
 
 // WebSocket readyState constants
 const WS_OPEN = 1;
+
+// Type for message handler functions
+type MessageHandler = (eventData: any) => Promise<void>;
 
 class ZoomWebSocketService {
   private ws: WebSocket | null = null;
@@ -16,6 +18,7 @@ class ZoomWebSocketService {
   private reconnectAttempts: number = 0;
   private MAX_RECONNECT_ATTEMPTS: number = 10;
   private RECONNECT_INTERVAL: number = 5000; // 5 seconds
+  private messageHandlers: MessageHandler[] = []; // Array to store message handlers
 
   /**
    * Initialize the WebSocket connection to Zoom
@@ -60,6 +63,18 @@ class ZoomWebSocketService {
   }
 
   /**
+   * Register a handler for WebSocket messages
+   * @param handler Function to call when a message is received
+   */
+  onMessage(handler: MessageHandler): void {
+    if (typeof handler !== 'function') {
+      throw new Error('Message handler must be a function');
+    }
+    logger.info('Registering new WebSocket message handler');
+    this.messageHandlers.push(handler);
+  }
+
+  /**
    * Set up WebSocket event handlers
    */
   private setupEventHandlers(): void {
@@ -101,9 +116,8 @@ class ZoomWebSocketService {
         
         // Process non-error events
         if (eventData.event_type || eventData.event) {
-          processZoomEvent(eventData).catch(error => {
-            logger.error('Error processing Zoom event', { error });
-          });
+          // Notify all registered message handlers
+          this.notifyMessageHandlers(eventData);
         } else {
           logger.debug('Received non-event message', { eventData });
         }
@@ -131,6 +145,23 @@ class ZoomWebSocketService {
     this.ws.on('pong', () => {
       logger.debug('Received pong from Zoom WebSocket');
     });
+  }
+
+  /**
+   * Notify all registered message handlers about a received event
+   * @param eventData The parsed event data
+   */
+  private async notifyMessageHandlers(eventData: any): Promise<void> {
+    logger.info(`Notifying ${this.messageHandlers.length} message handlers about event`);
+    
+    for (const handler of this.messageHandlers) {
+      try {
+        await handler(eventData);
+      } catch (error) {
+        logger.error('Error in message handler', { error });
+        // Continue with other handlers even if one fails
+      }
+    }
   }
 
   /**

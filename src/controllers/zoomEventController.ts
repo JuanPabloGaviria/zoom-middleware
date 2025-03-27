@@ -19,9 +19,6 @@ export const processZoomEvent = async (event: any): Promise<void> => {
       eventId: event.payload?.object?.id || 'unknown'
     });
     
-    // Send to n8n webhook if configured
-    await forwardEventToN8n(event);
-    
     // Handle different event types
     switch (eventType) {
       case 'recording.completed':
@@ -45,27 +42,6 @@ export const processZoomEvent = async (event: any): Promise<void> => {
     });
   }
 };
-
-/**
- * Forward event to n8n webhook if configured
- * @param event - The event data to forward
- */
-async function forwardEventToN8n(event: any): Promise<void> {
-  const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
-  
-  if (n8nWebhookUrl) {
-    try {
-      logger.info('Forwarding event to n8n webhook');
-      await axios.post(n8nWebhookUrl, event);
-      logger.info('Successfully forwarded event to n8n');
-    } catch (error) {
-      logger.error('Failed to forward event to n8n', { 
-        error: (error as Error).message,
-        webhookUrl: n8nWebhookUrl 
-      });
-    }
-  }
-}
 
 /**
  * Process extracted info with rate limiting to avoid API throttling

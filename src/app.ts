@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
+import axios from 'axios';
 import config from './config/env';
 import logger from './config/logger';
 import { errorHandler } from './middleware/errorHandler';
@@ -28,12 +29,38 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 // CORS middleware
 app.use(cors());
 
+// Forward Zoom events to n8n webhook
+const forwardEventToN8n = async (event: any): Promise<void> => {
+  const webhookUrl = process.env.N8N_WEBHOOK_URL;
+  
+  if (webhookUrl) {
+    try {
+      logger.info('Forwarding event to n8n webhook', { eventType: event.event_type || event.event });
+      await axios.post(webhookUrl, event);
+      logger.info('Successfully forwarded event to n8n');
+    } catch (error) {
+      logger.error('Failed to forward event to n8n', { 
+        error: (error as Error).message,
+        webhookUrl
+      });
+    }
+  } else {
+    logger.debug('N8N_WEBHOOK_URL not configured, skipping event forwarding');
+  }
+};
+
+// Register WebSocket event handler for forwarding events
+zoomWebSocketService.onMessage(async (event) => {
+  await forwardEventToN8n(event);
+});
+
 // Basic route
 app.get('/', function(req, res) {
   res.json({
     message: 'Zoom-ClickUp Integration API',
     status: 'Running',
     wsConnected: zoomWebSocketService.isConnected(),
+    n8nWebhook: process.env.N8N_WEBHOOK_URL ? 'Configured' : 'Not configured',
     documentation: 'Visit /docs for API documentation'
   });
 });
@@ -46,7 +73,8 @@ app.get('/docs', function(req, res) {
       '/': 'Status check endpoint',
       '/api/test-audio': 'Test endpoint for audio processing (POST)',
       '/api/ws-status': 'Check WebSocket connection status (GET)',
-      '/api/reconnect': 'Force WebSocket reconnection (POST)'
+      '/api/reconnect': 'Force WebSocket reconnection (POST)',
+      '/api/webhook-test': 'Test n8n webhook forwarding (POST)'
     },
     connectionType: 'This application uses WebSockets to connect to Zoom for real-time events'
   });
@@ -88,6 +116,38 @@ app.post('/api/reconnect', async (req, res) => {
   }
 });
 
+// Add endpoint to test n8n webhook forwarding
+app.post('/api/webhook-test', async (req, res) => {
+  try {
+    // Forward a test event to n8n
+    const testEvent = {
+      event_type: 'test.event',
+      event_ts: Date.now(),
+      payload: {
+        test: true,
+        message: 'Test event from Zoom-ClickUp Integration API',
+        data: req.body
+      }
+    };
+    
+    await forwardEventToN8n(testEvent);
+    
+    res.json({
+      status: 'success',
+      message: 'Test event forwarded to n8n webhook',
+      webhookUrl: process.env.N8N_WEBHOOK_URL || 'Not configured',
+      event: testEvent
+    });
+  } catch (error) {
+    logger.error('Error forwarding test event', { error });
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to forward test event',
+      error: (error as Error).message
+    });
+  }
+});
+
 // Error handler (must be last)
 app.use(errorHandler);
 
@@ -97,6 +157,13 @@ const server = app.listen(PORT, async function() {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${config.nodeEnv}`);
   logger.info(`API Base URL: http://localhost:${PORT}`);
+  
+  // Log webhook configuration
+  if (process.env.N8N_WEBHOOK_URL) {
+    logger.info(`n8n Webhook URL configured: ${process.env.N8N_WEBHOOK_URL}`);
+  } else {
+    logger.warn('N8N_WEBHOOK_URL not configured, events will not be forwarded');
+  }
   
   // Validate required environment variables
   const requiredEnvVars = [
